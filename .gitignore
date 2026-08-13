@@ -1,0 +1,42 @@
+# Dependencies / build
+node_modules/
+.next/
+out/
+dist/
+build/
+*.tsbuildinfo
+tsconfig.tsbuildinfo
+
+# Environment & secrets — never commit real keys
+.env
+.env.*
+!.env.example
+
+# Local runtime / user PII
+data/*
+!data/.gitkeep
+tmp/
+*.log
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+.cursor/
+.cursorignore
+
+# Legacy / local-only artifacts
+zip/
+zip.zip
+CursorVersion1.0/
+test.pdf
+.OfferRules
+.vercel/
+.snowflake/
+.v0-trash/
+__v0_runtime_loader.js
+__v0_devtools.tsx
+__v0_jsx-dev-runtime.ts
