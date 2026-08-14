@@ -2,6 +2,7 @@ import "server-only"
 
 import { createCanvas } from "@napi-rs/canvas"
 import { getDocument, OPS } from "pdfjs-dist/legacy/build/pdf.mjs"
+import { ensurePdfjsWorker } from "@/lib/document/pdfjs-worker"
 
 export interface PdfPhotoCandidate {
   dataUrl: string
@@ -187,10 +188,13 @@ async function extractCandidatesFromPage(page: any): Promise<PdfPhotoCandidate[]
  * 只保留宽高比 0.7~1.3、面积 > 10000px、位于页面顶部 30% 区域的图片；无符合项则返回空字符串。
  */
 export async function extractResumePhoto(buffer: Buffer): Promise<string> {
+  ensurePdfjsWorker()
   const doc = await getDocument({
     data: new Uint8Array(buffer),
     useSystemFonts: true,
     disableFontFace: true,
+    isEvalSupported: false,
+    useWorkerFetch: false,
   }).promise
 
   const opts = DEFAULT_OPTIONS

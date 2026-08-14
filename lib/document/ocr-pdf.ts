@@ -3,6 +3,7 @@ import "server-only"
 import { createCanvas } from "@napi-rs/canvas"
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs"
 import { createWorker } from "tesseract.js"
+import { ensurePdfjsWorker } from "@/lib/document/pdfjs-worker"
 
 /** 可提取文本少于此阈值时，判定为扫描版 PDF 并启用 OCR */
 const MIN_MEANINGFUL_CHARS = 40
@@ -31,10 +32,13 @@ function getOcrLanguages(): string {
 }
 
 async function pdfToPageImages(buffer: Buffer, maxPages: number): Promise<Buffer[]> {
+  ensurePdfjsWorker()
   const doc = await getDocument({
     data: new Uint8Array(buffer),
     useSystemFonts: true,
     disableFontFace: true,
+    isEvalSupported: false,
+    useWorkerFetch: false,
   }).promise
 
   const pageCount = Math.min(doc.numPages, maxPages)
