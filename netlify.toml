@@ -1,0 +1,12 @@
+# Netlify: use npm (package-lock.json). Do not use the stale pnpm-lock.yaml.
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "22"
+  # Force npm even if a pnpm lockfile is reintroduced by mistake
+  NPM_FLAGS = "--no-fund --no-audit"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"

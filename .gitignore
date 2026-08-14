@@ -7,6 +7,10 @@ build/
 *.tsbuildinfo
 tsconfig.tsbuildinfo
 
+# This repo standardizes on npm (package-lock.json).
+# An outdated pnpm-lock.yaml makes Netlify CI fail with ERR_PNPM_OUTDATED_LOCKFILE.
+pnpm-lock.yaml
+
 # Environment & secrets — never commit real keys
 .env
 .env.*
