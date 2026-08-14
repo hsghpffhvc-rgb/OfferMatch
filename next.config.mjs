@@ -26,12 +26,16 @@ const nextConfig = {
     return config
   },
   turbopack: {},
-  // pdf-parse / pdfjs worker 与原生依赖：确保 serverless 函数能追踪到相关文件
+  // pdf-parse / pdfjs worker / 简历字体：确保 serverless 函数能追踪到相关文件
   outputFileTracingIncludes: {
     '/api/parse-document': [
       './node_modules/pdf-parse/dist/**/*',
       './node_modules/pdfjs-dist/legacy/build/**/*',
       './node_modules/@napi-rs/canvas/**/*',
+    ],
+    '/api/export-pdf': [
+      './public/fonts/NotoSansSC-Regular.woff',
+      './public/fonts/NotoSansSC-Bold.woff',
     ],
   },
 }

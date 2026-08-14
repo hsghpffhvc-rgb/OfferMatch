@@ -1,7 +1,6 @@
 import { createElement } from "react"
 import { NextRequest, NextResponse } from "next/server"
-import { renderToStream } from "@react-pdf/renderer"
-import { Readable } from "node:stream"
+import { renderToBuffer } from "@react-pdf/renderer"
 import { registerResumeFonts } from "@/lib/pdf/fonts"
 import { getTemplate } from "@/lib/pdf/templates"
 import type { ResumeData } from "@/lib/pdf/types"
@@ -29,11 +28,11 @@ export async function POST(req: NextRequest) {
 
     registerResumeFonts()
 
-    const pdfStream = await renderToStream(
+    // 使用 buffer 而非 stream，避免 serverless 上流式响应被中途断开
+    const pdfBuffer = await renderToBuffer(
       createElement(Template, { resume: resumeData })
     )
 
-    const webStream = Readable.toWeb(pdfStream as Readable)
     const rawName = resumeData.basics?.name?.trim()
     const candidateName =
       rawName && !["求职者", "name"].includes(rawName.toLowerCase())
@@ -45,10 +44,12 @@ export async function POST(req: NextRequest) {
       "-"
     )
 
-    return new NextResponse(webStream as BodyInit, {
+    return new NextResponse(new Uint8Array(pdfBuffer), {
       headers: {
         "Content-Type": "application/pdf",
+        "Content-Length": String(pdfBuffer.byteLength),
         "Content-Disposition": `attachment; filename="${encodeURIComponent(fileName)}"`,
+        "Cache-Control": "no-store",
       },
     })
   } catch (error) {

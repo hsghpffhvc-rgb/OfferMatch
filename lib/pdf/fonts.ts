@@ -9,16 +9,26 @@ export { RESUME_FONT_FAMILY }
 
 let registered = false
 
-function candidateFontPaths(): string[] {
+const BUNDLED_REGULAR = "public/fonts/NotoSansSC-Regular.woff"
+const BUNDLED_BOLD = "public/fonts/NotoSansSC-Bold.woff"
+
+function bundledFontPath(relativePath: string): string {
+  return path.join(process.cwd(), relativePath)
+}
+
+function fileExists(filePath: string): boolean {
+  try {
+    return fs.existsSync(filePath)
+  } catch {
+    return false
+  }
+}
+
+function systemFallbackFonts(): string[] {
   const home = os.homedir()
-  const bundled = [
-    path.join(process.cwd(), "public/fonts/NotoSansSC-Regular.woff"),
-    path.join(process.cwd(), "public/fonts/NotoSansSC-Bold.woff"),
-  ]
 
   if (process.platform === "darwin") {
     return [
-      ...bundled,
       "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
       "/Library/Fonts/Arial Unicode.ttf",
       path.join(home, "Library/Fonts/Arial Unicode.ttf"),
@@ -30,7 +40,6 @@ function candidateFontPaths(): string[] {
   if (process.platform === "win32") {
     const windir = process.env.WINDIR ?? "C:\\Windows"
     return [
-      ...bundled,
       path.join(windir, "Fonts", "simhei.ttf"),
       path.join(windir, "Fonts", "msyh.ttf"),
       path.join(windir, "Fonts", "msyh.ttc"),
@@ -40,7 +49,6 @@ function candidateFontPaths(): string[] {
   }
 
   return [
-    ...bundled,
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
     "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
@@ -50,47 +58,54 @@ function candidateFontPaths(): string[] {
   ]
 }
 
-export function resolveSystemCjkFontPath(): string {
-  const found = candidateFontPaths().find((p) => {
-    try {
-      return fs.existsSync(p)
-    } catch {
-      return false
-    }
-  })
+/** 优先使用随仓库打包的 Noto Sans SC，避免 Vercel 无系统中文字体 */
+export function resolveBundledFontPaths(): { regular: string; bold: string } {
+  const regularBundled = bundledFontPath(BUNDLED_REGULAR)
+  const boldBundled = bundledFontPath(BUNDLED_BOLD)
 
-  if (!found) {
+  if (fileExists(regularBundled)) {
+    return {
+      regular: regularBundled,
+      bold: fileExists(boldBundled) ? boldBundled : regularBundled,
+    }
+  }
+
+  const fallback = systemFallbackFonts().find(fileExists)
+  if (!fallback) {
     throw new Error(
-      "未找到可用的系统中文字体，请安装 Arial Unicode / 黑体 / Noto Sans CJK"
+      "未找到中文字体：请确认 public/fonts/NotoSansSC-*.woff 已随部署打包（Vercel 需 outputFileTracingIncludes）"
     )
   }
 
-  return found
+  return { regular: fallback, bold: fallback }
+}
+
+/** @deprecated 使用 resolveBundledFontPaths；保留供旧调用兼容 */
+export function resolveSystemCjkFontPath(): string {
+  return resolveBundledFontPaths().regular
 }
 
 /** 幂等注册：导出 PDF 前调用一次 */
 export function registerResumeFonts(): void {
   if (registered) return
 
-  const src = resolveSystemCjkFontPath()
-  const boldPath = path.join(
-    process.cwd(),
-    "public/fonts/NotoSansSC-Bold.woff"
-  )
-  const boldSrc = fs.existsSync(boldPath) ? boldPath : src
+  const { regular, bold } = resolveBundledFontPaths()
 
   Font.register({
     family: RESUME_FONT_FAMILY,
     fonts: [
-      { src, fontWeight: "normal" },
-      { src: boldSrc, fontWeight: "bold" },
+      { src: regular, fontWeight: "normal" },
+      { src: bold, fontWeight: "bold" },
     ],
   })
 
   // CJK 文本没有空格分词。若整段返回，React-PDF 会将其视为不可换行长词并溢出页面。
   // 汉字和标点按字符断行，英文术语与数字保持为完整 token，兼顾中文换行和术语可读性。
-  Font.registerHyphenationCallback((word) =>
-    word.match(/[\u4e00-\u9fff]|[A-Za-z0-9]+(?:[.+#/-][A-Za-z0-9]+)*|[^\s]/g) ?? [word]
+  Font.registerHyphenationCallback(
+    (word) =>
+      word.match(
+        /[\u4e00-\u9fff]|[A-Za-z0-9]+(?:[.+#/-][A-Za-z0-9]+)*|[^\s]/g
+      ) ?? [word]
   )
 
   registered = true

@@ -107,11 +107,15 @@ export function ResumePdfPreview({
     setLoading(true)
     setError(null)
 
+    const controller = new AbortController()
+    const timeoutId = window.setTimeout(() => controller.abort(), 55_000)
+
     try {
       const res = await fetch("/api/export-pdf", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
+        signal: controller.signal,
       })
 
       if (!res.ok) {
@@ -122,6 +126,9 @@ export function ResumePdfPreview({
       }
 
       const blob = await res.blob()
+      if (!blob.size) {
+        throw new Error("PDF 响应为空，请重试")
+      }
       const url = URL.createObjectURL(blob)
       setPdfUrl((prev) => {
         if (prev) URL.revokeObjectURL(prev)
@@ -137,8 +144,19 @@ export function ResumePdfPreview({
         if (prev) URL.revokeObjectURL(prev)
         return null
       })
-      setError(err instanceof Error ? err.message : "PDF 生成失败")
+      let message = "PDF 生成失败"
+      if (err instanceof DOMException && err.name === "AbortError") {
+        message = "PDF 生成超时，请检查网络后重试"
+      } else if (err instanceof TypeError) {
+        // 浏览器网络层失败（含 Failed to fetch）
+        message =
+          "网络连接失败，无法生成 PDF。若使用 vercel.app，国内网络可能不稳定，请稍后重试或配置自定义域名"
+      } else if (err instanceof Error && err.message) {
+        message = err.message
+      }
+      setError(message)
     } finally {
+      window.clearTimeout(timeoutId)
       setLoading(false)
     }
   }, [payload, templateId])
