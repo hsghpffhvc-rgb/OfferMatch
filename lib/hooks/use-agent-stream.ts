@@ -193,8 +193,24 @@ export function useAgentStream() {
       })
 
       if (!response.ok) {
-        const err = await response.json().catch(() => ({ error: "请求失败" }))
-        throw new Error(err.error ?? `HTTP ${response.status}`)
+        const err = await response.json().catch(() => ({ error: "请求失败", code: "" }))
+        const message = err.error ?? `HTTP ${response.status}`
+        // 配置缺失：直接报错，不要灌示例简历掩盖问题
+        if (response.status === 503 || err.code === "AI_CONFIG_ERROR") {
+          track(AnalyticsEvent.analysisFailed, {
+            has_resume: hasResume,
+            message: message.slice(0, 120),
+          })
+          setState({
+            ...initialAgentStreamState,
+            status: "error",
+            error: message,
+            usedFallback: false,
+            streamInterrupted: false,
+          })
+          return
+        }
+        throw new Error(message)
       }
 
       const reader = response.body?.getReader()
@@ -265,10 +281,22 @@ export function useAgentStream() {
       }
     } catch (error) {
       if ((error as Error).name === "AbortError") return
+      const message = error instanceof Error ? error.message : "分析失败"
       track(AnalyticsEvent.analysisFailed, {
         has_resume: hasResume,
-        message: error instanceof Error ? error.message.slice(0, 120) : "unknown",
+        message: message.slice(0, 120),
       })
+      // 配置类错误不要用示例数据掩盖
+      if (/OPENAI_API_KEY|未配置有效|AI_CONFIG_ERROR|Incorrect API key|Unauthorized/i.test(message)) {
+        setState({
+          ...initialAgentStreamState,
+          status: "error",
+          error: message,
+          usedFallback: false,
+          streamInterrupted: false,
+        })
+        return
+      }
       setState((prev) => ({
         ...prev,
         status: "done",

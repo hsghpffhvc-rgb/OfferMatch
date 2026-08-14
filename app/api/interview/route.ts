@@ -1,12 +1,20 @@
 import { runInterviewPipeline } from "@/lib/agent/run-agent"
 import { createSSEStream } from "@/lib/agent/sse"
 import { validateInterviewBank } from "@/lib/agent/interview-fallback"
+import { assertAiConfigured } from "@/lib/agent/ai-config"
 import type { InterviewRequestBody } from "@/lib/agent/types"
 
 export const runtime = "nodejs"
 export const maxDuration = 120
 
 export async function POST(request: Request) {
+  try {
+    assertAiConfigured()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "AI 未配置"
+    return Response.json({ error: message, code: "AI_CONFIG_ERROR" }, { status: 503 })
+  }
+
   const bankCheck = validateInterviewBank()
   if (!bankCheck.ok) {
     return Response.json(

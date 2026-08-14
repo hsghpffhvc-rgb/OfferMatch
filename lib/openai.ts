@@ -1,12 +1,11 @@
 import OpenAI from "openai"
+import { assertAiConfigured } from "@/lib/agent/ai-config"
 
 let client: OpenAI | null = null
 let clientKey: string | null = null
 
 export function getOpenAIClient(): OpenAI {
-  if (!process.env.OPENAI_API_KEY) {
-    throw new Error("OPENAI_API_KEY 未配置，请在 .env.local 中设置")
-  }
+  assertAiConfigured()
 
   const fingerprint = `${process.env.OPENAI_API_KEY}|${process.env.OPENAI_BASE_URL ?? ""}`
   if (!client || clientKey !== fingerprint) {

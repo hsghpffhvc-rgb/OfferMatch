@@ -25,9 +25,17 @@ npm run dev
 
 浏览器访问 [http://localhost:3000](http://localhost:3000)。
 
-## 隐私与安全（GitHub 托管必读）
+## 隐私与安全（GitHub / Netlify 托管必读）
 
 - **只提交** `.env.example`；真实密钥放在本地 `.env.local`（已被 `.gitignore` 忽略）
+- **Netlify 部署必须单独配置环境变量**（仓库里的 `.env.local` 不会自动同步到线上）：
+  1. 打开 [Netlify → offermatch → Environment variables](https://app.netlify.com/projects/offermatch/configuration/env)
+  2. 添加（与本地 `.env.local` 一致）：
+     - `OPENAI_API_KEY`（必填）
+     - `OPENAI_BASE_URL`=`https://dashscope.aliyuncs.com/compatible-mode/v1`（通义千问）
+     - `OPENAI_MODEL`=`qwen3.8-max`（或你的模型名）
+  3. 保存后 **Trigger deploy → Clear cache and deploy site**
+  4. 可用 `https://你的站点/api/health` 检查：`aiConfigured` 应为 `true`
 - **不要提交** 用户反馈、简历原文、联系方式等本地数据（`data/` 已忽略）
 - 简历与 JD 分析默认在浏览器本地 / 你的模型 API 侧处理；公开仓库前请确认未混入个人简历样本
 - PostHog 等埋点为可选；未配置 `NEXT_PUBLIC_POSTHOG_KEY` 时不会上报

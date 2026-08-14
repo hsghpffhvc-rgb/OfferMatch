@@ -21,6 +21,7 @@ import {
   getFallbackPersona,
   getFallbackRewrite,
 } from "@/lib/agent/fallback-content"
+import { assertAiConfigured, isAiConfigError } from "@/lib/agent/ai-config"
 import type {
   AgentAnalysisResult,
   AgentPhase,
@@ -185,6 +186,14 @@ export async function runAgentPipeline(
   resume: string,
   emit: StreamEventEmitter,
 ): Promise<AgentAnalysisResult> {
+  try {
+    assertAiConfigured()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "AI 未配置"
+    emit({ type: "error", message, phase: "A" })
+    throw error
+  }
+
   let pipelineSource: ResultSource = "model"
 
   // 阶段 A
@@ -200,6 +209,10 @@ export async function runAgentPipeline(
     persona = markSource(extractJsonFromText<PersonaResult>(phaseAText), "model")
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown error"
+    if (isAiConfigError(error)) {
+      emit({ type: "error", message: reason, phase: "A" })
+      throw error
+    }
     console.warn(`phase_A_fallback: ${reason}`)
     persona = getFallbackPersona()
     pipelineSource = "fallback"
@@ -224,6 +237,10 @@ export async function runAgentPipeline(
     outline = markSource(extractJsonFromText<OutlineResult>(phaseBText), "model")
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown error"
+    if (isAiConfigError(error)) {
+      emit({ type: "error", message: reason, phase: "B" })
+      throw error
+    }
     console.warn(`phase_B_fallback: ${reason}`)
     outline = getFallbackOutline()
     pipelineSource = "fallback"
@@ -254,6 +271,10 @@ export async function runAgentPipeline(
     )
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown error"
+    if (isAiConfigError(error)) {
+      emit({ type: "error", message: reason, phase: "C" })
+      throw error
+    }
     console.warn(`phase_C_fallback: ${reason}`)
     rewrite = getFallbackRewrite()
     pipelineSource = "fallback"
@@ -276,6 +297,14 @@ export async function runInterviewPipeline(
   context: InterviewContext,
   emit: StreamEventEmitter,
 ): Promise<InterviewResult> {
+  try {
+    assertAiConfigured()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "AI 未配置"
+    emit({ type: "error", message, phase: "D" })
+    throw error
+  }
+
   let metrics: StreamMetrics | undefined
   let interview: InterviewResult
   let source: ResultSource = "model"
@@ -301,6 +330,10 @@ export async function runInterviewPipeline(
     interview = markSource(parseInterviewResult(phaseDText), "model")
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown error"
+    if (isAiConfigError(error)) {
+      emit({ type: "error", message: reason, phase: "D" })
+      throw error
+    }
     console.warn(`interview_prediction_fallback: ${reason}`)
     interview = buildFallbackInterview(context, jd)
     source = "fallback"
