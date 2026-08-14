@@ -11,10 +11,11 @@
 [[plugins]]
   package = "@netlify/plugin-nextjs"
 
-# 确保 pdf.js worker 进入函数运行时（配合 next.config outputFileTracingIncludes）
+# pdf-parse/worker 的 getData() 与原生 canvas 依赖需要进入函数运行时
 [functions]
   included_files = [
+    "node_modules/pdf-parse/dist/**",
     "node_modules/pdfjs-dist/legacy/build/**",
     "node_modules/pdfjs-dist/build/**",
-    "node_modules/pdf-parse/dist/**",
+    "node_modules/@napi-rs/canvas/**",
   ]

@@ -2,7 +2,7 @@ import "server-only"
 
 import { createCanvas } from "@napi-rs/canvas"
 import { getDocument, OPS } from "pdfjs-dist/legacy/build/pdf.mjs"
-import { ensurePdfjsWorker } from "@/lib/document/pdfjs-worker"
+import { ensurePdfjsWorker } from "@/lib/document/ensure-pdf-worker"
 
 export interface PdfPhotoCandidate {
   dataUrl: string
@@ -193,8 +193,6 @@ export async function extractResumePhoto(buffer: Buffer): Promise<string> {
     data: new Uint8Array(buffer),
     useSystemFonts: true,
     disableFontFace: true,
-    isEvalSupported: false,
-    useWorkerFetch: false,
   }).promise
 
   const opts = DEFAULT_OPTIONS

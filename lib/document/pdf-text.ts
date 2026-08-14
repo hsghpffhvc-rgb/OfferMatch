@@ -1,7 +1,7 @@
 import "server-only"
 
 import { PDFParse } from "pdf-parse"
-import { ensurePdfjsWorker } from "@/lib/document/pdfjs-worker"
+import { ensurePdfjsWorker } from "@/lib/document/ensure-pdf-worker"
 
 /** 使用 pdf-parse v2 API 从 PDF 提取纯文本 */
 export async function extractPdfText(buffer: Buffer): Promise<string> {

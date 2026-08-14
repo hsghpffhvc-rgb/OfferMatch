@@ -3,7 +3,7 @@ import "server-only"
 import { createCanvas } from "@napi-rs/canvas"
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs"
 import { createWorker } from "tesseract.js"
-import { ensurePdfjsWorker } from "@/lib/document/pdfjs-worker"
+import { ensurePdfjsWorker } from "@/lib/document/ensure-pdf-worker"
 
 /** 可提取文本少于此阈值时，判定为扫描版 PDF 并启用 OCR */
 const MIN_MEANINGFUL_CHARS = 40
@@ -37,26 +37,28 @@ async function pdfToPageImages(buffer: Buffer, maxPages: number): Promise<Buffer
     data: new Uint8Array(buffer),
     useSystemFonts: true,
     disableFontFace: true,
-    isEvalSupported: false,
-    useWorkerFetch: false,
   }).promise
 
   const pageCount = Math.min(doc.numPages, maxPages)
   const images: Buffer[] = []
 
-  for (let pageNum = 1; pageNum <= pageCount; pageNum++) {
-    const page = await doc.getPage(pageNum)
-    const viewport = page.getViewport({ scale: 2.5 })
-    const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height))
-    const ctx = canvas.getContext("2d")
+  try {
+    for (let pageNum = 1; pageNum <= pageCount; pageNum++) {
+      const page = await doc.getPage(pageNum)
+      const viewport = page.getViewport({ scale: 2.5 })
+      const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height))
+      const ctx = canvas.getContext("2d")
 
-    await page.render({
-      canvas: canvas as unknown as HTMLCanvasElement,
-      canvasContext: ctx as unknown as CanvasRenderingContext2D,
-      viewport,
-    }).promise
+      await page.render({
+        canvas: canvas as unknown as HTMLCanvasElement,
+        canvasContext: ctx as unknown as CanvasRenderingContext2D,
+        viewport,
+      }).promise
 
-    images.push(canvas.toBuffer("image/png"))
+      images.push(canvas.toBuffer("image/png"))
+    }
+  } finally {
+    await doc.destroy()
   }
 
   return images

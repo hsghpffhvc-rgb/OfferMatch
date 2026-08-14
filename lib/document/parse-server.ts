@@ -7,6 +7,7 @@ import {
 import { extractPdfText } from "@/lib/document/pdf-text"
 import { needsOcrFallback, ocrPdfBuffer } from "@/lib/document/ocr-pdf"
 import { extractResumePhoto } from "@/lib/document/pdf-photo"
+import { ensurePdfjsWorker } from "@/lib/document/ensure-pdf-worker"
 
 export type ParseMethod = "text" | "ocr"
 
@@ -18,6 +19,8 @@ export interface ParseDocumentResult {
 }
 
 async function parsePdfBuffer(buffer: Buffer): Promise<ParseDocumentResult> {
+  ensurePdfjsWorker()
+
   let extracted = ""
 
   try {
