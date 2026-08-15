@@ -1,6 +1,7 @@
 "use client"
 
 import {
+  createElement,
   useCallback,
   useEffect,
   useMemo,
@@ -18,6 +19,50 @@ import {
   type TemplateId,
 } from "@/lib/pdf/templates/options"
 import { AnalyticsEvent, track } from "@/lib/analytics"
+
+/** 浏览器本地生成 PDF，避免依赖易超时的服务端 /api/export-pdf */
+async function renderPdfInBrowser(resume: ResumeData): Promise<Blob> {
+  const [{ pdf }, { getTemplate }, { registerClientResumeFonts }] =
+    await Promise.all([
+      import("@react-pdf/renderer"),
+      import("@/lib/pdf/templates"),
+      import("@/lib/pdf/register-client-fonts"),
+    ])
+
+  await registerClientResumeFonts()
+  const Template = getTemplate(resume.metadata.template)
+  // Template 根节点已是 <Document>；react-pdf 类型对自定义 props 过严
+  const instance = pdf(
+    createElement(Template, { resume }) as Parameters<typeof pdf>[0]
+  )
+  const blob = await instance.toBlob()
+  if (!blob.size) throw new Error("PDF 响应为空，请重试")
+  return blob
+}
+
+/** 服务端兜底（本地域名不通或客户端库异常时） */
+async function renderPdfViaApi(
+  resume: ResumeData,
+  signal: AbortSignal
+): Promise<Blob> {
+  const res = await fetch("/api/export-pdf", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(resume),
+    signal,
+  })
+
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as {
+      error?: string
+    } | null
+    throw new Error(body?.error || `导出失败（${res.status}）`)
+  }
+
+  const blob = await res.blob()
+  if (!blob.size) throw new Error("PDF 响应为空，请重试")
+  return blob
+}
 
 interface ResumePdfPreviewProps {
   resumeData: ResumeData
@@ -108,27 +153,20 @@ export function ResumePdfPreview({
     setError(null)
 
     const controller = new AbortController()
-    const timeoutId = window.setTimeout(() => controller.abort(), 55_000)
+    const timeoutId = window.setTimeout(() => controller.abort(), 90_000)
 
     try {
-      const res = await fetch("/api/export-pdf", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-      })
-
-      if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as {
-          error?: string
-        } | null
-        throw new Error(body?.error || `导出失败（${res.status}）`)
+      let blob: Blob
+      let via: "client" | "api" = "client"
+      try {
+        blob = await renderPdfInBrowser(payload)
+      } catch (clientErr) {
+        // 客户端失败时再尝试服务端；若网络仍不通会在此抛出
+        console.warn("客户端 PDF 生成失败，尝试服务端:", clientErr)
+        via = "api"
+        blob = await renderPdfViaApi(payload, controller.signal)
       }
 
-      const blob = await res.blob()
-      if (!blob.size) {
-        throw new Error("PDF 响应为空，请重试")
-      }
       const url = URL.createObjectURL(blob)
       setPdfUrl((prev) => {
         if (prev) URL.revokeObjectURL(prev)
@@ -138,6 +176,7 @@ export function ResumePdfPreview({
         template: templateId,
         bytes: blob.size,
         action: "generated",
+        via,
       })
     } catch (err) {
       setPdfUrl((prev) => {
@@ -146,11 +185,11 @@ export function ResumePdfPreview({
       })
       let message = "PDF 生成失败"
       if (err instanceof DOMException && err.name === "AbortError") {
-        message = "PDF 生成超时，请检查网络后重试"
-      } else if (err instanceof TypeError) {
-        // 浏览器网络层失败（含 Failed to fetch）
         message =
-          "网络连接失败，无法生成 PDF。若使用 vercel.app，国内网络可能不稳定，请稍后重试或配置自定义域名"
+          "PDF 生成超时。请确认已用自定义域名访问，并在 Cloudflare 开启橙色云代理后重试"
+      } else if (err instanceof TypeError) {
+        message =
+          "网络连接失败，无法生成 PDF。请用已绑定的自定义域名访问（并建议 Cloudflare 代理），不要直连 vercel.app"
       } else if (err instanceof Error && err.message) {
         message = err.message
       }
