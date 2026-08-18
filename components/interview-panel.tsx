@@ -69,14 +69,14 @@ export function InterviewPanel({ jd, persona, rewrite, isAnalyzing }: InterviewP
   const startDisabled = !bankReady || starting || isStreaming
 
   return (
-    <div id="phase-D" className="mt-6 w-full max-w-4xl text-left">
+    <div id="phase-D" className="w-full text-left">
       {/* 未开始：卡片入口，不全屏弹窗挡操作 */}
       {!hasStarted && (
         <div className="rounded-3xl border border-dashed border-primary/30 bg-primary/5 p-5 text-center sm:p-6">
           <Sparkles className="mx-auto mb-3 size-8 text-primary" aria-hidden="true" />
           <p className="text-base font-semibold text-foreground">准备好了？来模拟面试吧</p>
           <p className="mt-1.5 text-sm text-muted-foreground">
-            基于你的优化简历和 JD，AI 将生成 3-5 道高频面试题及完整示范话术
+            基于你的优化简历和职位描述，AI 将生成 3-5 道高频面试题及完整示范话术
           </p>
           <span
             title={!bankReady ? "题库未就绪，请联系管理员" : undefined}
@@ -107,7 +107,7 @@ export function InterviewPanel({ jd, persona, rewrite, isAnalyzing }: InterviewP
       {isStreaming && (
         <div className="rounded-3xl border border-border/60 bg-card p-6 text-center shadow-soft">
           <Loader2 className="mx-auto mb-3 size-5 animate-spin text-primary" aria-hidden="true" />
-          <p className="text-sm text-muted-foreground">正在根据简历与 JD 生成面试题…</p>
+          <p className="text-sm text-muted-foreground">正在根据简历与职位描述生成面试题…</p>
         </div>
       )}
 
@@ -160,7 +160,7 @@ export function InterviewPanel({ jd, persona, rewrite, isAnalyzing }: InterviewP
               </span>
               <div>
                 <p className="text-sm font-medium">面试准备清单</p>
-                <p className="text-xs text-muted-foreground">基于简历与 JD 生成</p>
+                <p className="text-xs text-muted-foreground">基于简历与职位描述生成</p>
               </div>
             </div>
             {state.interview.preparationChecklist.length > 0 && (

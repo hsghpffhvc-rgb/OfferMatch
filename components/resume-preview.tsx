@@ -21,11 +21,34 @@ export function ResumePreview({
   rewriteResult,
   resumePhoto,
 }: ResumePreviewProps) {
+  const parts = useResumePreviewParts({
+    markdown,
+    isLoading,
+    rewriteResult,
+    resumePhoto,
+  })
+
+  if (!parts.markdown && !parts.pdf) return null
+
+  return (
+    <div className="mt-6 flex w-full flex-col gap-6 text-left">
+      {parts.markdown}
+      {parts.pdf}
+    </div>
+  )
+}
+
+export function useResumePreviewParts({
+  markdown,
+  isLoading,
+  rewriteResult,
+  resumePhoto,
+}: ResumePreviewProps) {
   const [copied, setCopied] = useState(false)
   const [pdfOpen, setPdfOpen] = useState(false)
 
   const pdfMapping = useMemo(() => {
-    if (!rewriteResult) return { data: null, error: null }
+    if (!rewriteResult) return { data: null, error: null as string | null }
     try {
       return {
         data: mapRewriteResultToResumeData(rewriteResult, {
@@ -42,11 +65,7 @@ export function ResumePreview({
   }, [rewriteResult, resumePhoto])
 
   const mappedData = pdfMapping.data
-
-  // 不自动展开 PDF：客户端渲染会卡住主线程（Chrome「此页面没有响应」）
-  // 由用户点击「简历预览 & 导出」再生成
-
-  if (!markdown && !isLoading) return null
+  const showMarkdown = Boolean(markdown) || Boolean(isLoading)
 
   const handleCopy = async () => {
     if (!markdown) return
@@ -55,15 +74,15 @@ export function ResumePreview({
     setTimeout(() => setCopied(false), 2000)
   }
 
-  return (
-    <div className="mt-6 w-full max-w-4xl text-left">
+  const markdownCard = showMarkdown ? (
+    <div className="w-full text-left">
       <div className="rounded-3xl border border-border/70 bg-card p-4 shadow-soft">
         <div className="mb-3 flex items-center justify-between gap-2">
           <p className="text-sm font-medium">重写简历预览</p>
           <Button
             variant="outline"
             size="sm"
-            onClick={handleCopy}
+            onClick={() => void handleCopy()}
             disabled={!markdown}
             className="gap-1.5 rounded-full"
           >
@@ -92,43 +111,45 @@ export function ResumePreview({
           )}
         </div>
       </div>
+    </div>
+  ) : null
 
-      {mappedData ? (
-        <div className="mt-4 overflow-hidden rounded-3xl border border-border/70 bg-card shadow-soft">
-          <button
-            type="button"
-            onClick={() => setPdfOpen((open) => !open)}
-            className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/40"
-            aria-expanded={pdfOpen}
-          >
-            <span className="text-sm font-medium">📄 简历预览 & 导出</span>
-            <span className="text-xs text-muted-foreground">
-              {pdfOpen ? "收起" : "点击生成预览"}
-            </span>
-            <ChevronDown
-              className={cn(
-                "size-4 text-muted-foreground transition-transform",
-                pdfOpen && "rotate-180"
-              )}
-              aria-hidden="true"
-            />
-          </button>
-          {pdfOpen ? (
-            <div className="border-t border-border/50 px-2 pb-2 sm:px-3 sm:pb-3">
-              <ResumePdfPreview
-                resumeData={mappedData}
-                defaultTemplate="minimal"
-              />
-            </div>
-          ) : null}
+  const pdfCard = mappedData ? (
+    <div className="w-full overflow-hidden rounded-3xl border border-border/70 bg-card text-left shadow-soft">
+      <button
+        type="button"
+        onClick={() => setPdfOpen((open) => !open)}
+        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/40"
+        aria-expanded={pdfOpen}
+      >
+        <span className="text-sm font-medium">📄 简历预览 & 导出</span>
+        <span className="text-xs text-muted-foreground">
+          {pdfOpen ? "收起" : "点击生成预览"}
+        </span>
+        <ChevronDown
+          className={cn(
+            "size-4 text-muted-foreground transition-transform",
+            pdfOpen && "rotate-180"
+          )}
+          aria-hidden="true"
+        />
+      </button>
+      {pdfOpen ? (
+        <div className="border-t border-border/50 px-2 pb-2 sm:px-3 sm:pb-3">
+          <ResumePdfPreview
+            resumeData={mappedData}
+            defaultTemplate="minimal"
+          />
         </div>
-      ) : pdfMapping.error ? (
-        <p className="mt-4 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-          {pdfMapping.error}
-        </p>
       ) : null}
     </div>
-  )
+  ) : pdfMapping.error ? (
+    <p className="rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+      {pdfMapping.error}
+    </p>
+  ) : null
+
+  return { markdown: markdownCard, pdf: pdfCard }
 }
 
 function MarkdownContent({ content }: { content: string }) {

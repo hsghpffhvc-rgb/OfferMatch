@@ -50,6 +50,17 @@ type StreamEvent =
 | 响应 | `{ text: string, fileName: string, pageCount?: number }` |
 | 文件 | `app/api/parse-document/route.ts` |
 
+### POST /api/feedback
+
+| 项目 | 说明 |
+|------|------|
+| 描述 | 轻量反馈采集：类型分级后按类型收集步骤 / 复现 / 功能描述 |
+| 请求 | `{ type: "bug"\|"stuck"\|"feature"\|"other", steps?: string[], reproducible?: boolean, errorText?: string, message?: string, contact?: string, page?: string }` |
+| 校验 | `bug` 必填 steps、errorText（页面报错提示）与 reproducible；`stuck`（执行卡顿）必填 steps；`feature` / `other` 必填 message |
+| 响应 | `{ ok: true }` 或 `{ error: string }` |
+| 存储 | `data/feedback.jsonl`（每行一条 JSON，`status` 默认 `open`） |
+| 文件 | `app/api/feedback/route.ts` |
+
 ### POST /api/interview
 
 | 项目 | 说明 |
@@ -93,3 +104,4 @@ type StreamEvent =
 |------|------|------|
 | 2026-08-07 | 基于现有代码创建，冻结 SSE 事件格式和 2 个已有接口 | — |
 | 2026-08-12 | 新增 `/api/interview`，使用紧凑证据上下文与独立完成事件 | 面试预测调用方 |
+| 2026-08-19 | 重写 `/api/feedback`：按 bug / stuck / feature / other 分级采集 | 反馈弹窗 |

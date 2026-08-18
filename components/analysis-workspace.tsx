@@ -36,6 +36,7 @@ export function AnalysisWorkspace() {
     resumePhase: AgentPhase | null
   } | null>(null)
   const [sessionReady, setSessionReady] = useState(false)
+  const [inputsResetKey, setInputsResetKey] = useState(0)
 
   const isStreaming = state.status === "streaming"
   const isAnalysisDone = state.status === "done" && !!state.persona && !!state.rewrite
@@ -120,12 +121,13 @@ export function AnalysisWorkspace() {
     setLastJd("")
     setResumePrompt(null)
     setSessionReady(true)
+    setInputsResetKey((key) => key + 1)
   }
 
   const handleClearWorkspace = () => {
     if (
       typeof window !== "undefined" &&
-      !window.confirm("确定清空本机工作台？将删除当前分析结果与面试进度。")
+      !window.confirm("确定清空本机工作台？将删除当前分析结果、面试进度以及已填写的职位描述和简历。")
     ) {
       return
     }
@@ -196,28 +198,51 @@ export function AnalysisWorkspace() {
             </div>
           )}
 
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_400px] lg:items-start">
-            <div id="phase-C" className="flex w-full min-w-0 flex-col items-center">
-              <HeroInput state={state} onAnalyze={handleAnalyze} />
-              {isAnalysisDone && sessionReady && (
-                <InterviewPanel
-                  jd={lastJd}
-                  persona={state.persona}
-                  rewrite={state.rewrite}
-                  isAnalyzing={isStreaming}
-                />
-              )}
-            </div>
+          <div className="w-full">
+            <HeroInput
+              state={state}
+              onAnalyze={handleAnalyze}
+              resetKey={inputsResetKey}
+            >
+              {({ composer, reasoning, resumeMarkdown, resumePdf }) => (
+                <>
+                  <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_400px] lg:items-stretch">
+                    <div className="flex h-full min-h-0 min-w-0 w-full">{composer}</div>
+                    <PersonaCard
+                      persona={state.persona}
+                      isLoading={isStreaming}
+                      className="h-full"
+                    />
+                  </div>
 
-            <aside className="space-y-4 self-start pt-0" aria-label="数据看板">
-              <PersonaCard persona={state.persona} isLoading={isStreaming} />
-              <MatchScoreCard scores={scores} isLoading={isStreaming} />
-              <KeywordGapCard
-                keywordAnalysis={scores?.keywordAnalysis ?? null}
-                isLoading={isStreaming}
-              />
-              <StrengthWeaknessCard scores={scores} isLoading={isStreaming} />
-            </aside>
+                  {reasoning ? <div className="mt-6">{reasoning}</div> : null}
+
+                  <div
+                    id="phase-C"
+                    className="mt-6 grid grid-cols-1 items-start gap-6 lg:grid-cols-[1fr_400px]"
+                  >
+                    <div className="min-w-0">{resumeMarkdown}</div>
+                    <MatchScoreCard scores={scores} isLoading={isStreaming} />
+                    <div className="min-w-0">{resumePdf}</div>
+                    <div className="flex flex-col gap-6">
+                      <KeywordGapCard
+                        keywordAnalysis={scores?.keywordAnalysis ?? null}
+                        isLoading={isStreaming}
+                      />
+                      <StrengthWeaknessCard scores={scores} isLoading={isStreaming} />
+                    </div>
+                    {isAnalysisDone && sessionReady ? (
+                      <InterviewPanel
+                        jd={lastJd}
+                        persona={state.persona}
+                        rewrite={state.rewrite}
+                        isAnalyzing={isStreaming}
+                      />
+                    ) : null}
+                  </div>
+                </>
+              )}
+            </HeroInput>
           </div>
         </section>
       </main>

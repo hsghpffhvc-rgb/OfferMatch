@@ -4,7 +4,7 @@ import type { AgentPhase } from "@/lib/agent/types"
 import { Loader2 } from "lucide-react"
 
 const phaseLabels: Record<AgentPhase, string> = {
-  A: "阶段 A · JD 深度解析",
+  A: "阶段 A · 职位描述深度解析",
   B: "阶段 B · 逆向推导大纲",
   C: "阶段 C · 差异化重写",
   D: "阶段 D · 模拟面试",
@@ -13,7 +13,7 @@ const phaseLabels: Record<AgentPhase, string> = {
 /** 无模型原文时，向用户展示的阶段进度说明（避免暴露内部 JSON） */
 const phaseStatusCopy: Record<AgentPhase, string> = {
   A: "正在解析岗位要求，提炼理想候选人画像与关键技能…",
-  B: "正在根据 JD 与画像，构建理想简历大纲…",
+  B: "正在根据职位描述与画像，构建理想简历大纲…",
   C: "正在评估匹配度并重写简历，请稍候…",
   D: "正在生成面试预测题与作答策略…",
 }
@@ -40,7 +40,7 @@ export function ReasoningPanel({
     (currentPhase ? phaseStatusCopy[currentPhase] : "正在连接 AI 引擎…")
 
   return (
-    <div className="mt-6 w-full max-w-2xl text-left">
+    <div className="w-full text-left">
       <div className="rounded-3xl border border-border/70 bg-card/80 p-4 shadow-soft backdrop-blur">
         <div className="mb-3 flex items-center gap-2">
           {isStreaming && <Loader2 className="size-4 animate-spin text-primary" aria-hidden="true" />}

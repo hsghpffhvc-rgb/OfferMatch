@@ -2,10 +2,11 @@
 
 import type { PersonaResult } from "@/lib/agent/types"
 import { Target, CheckCircle2 } from "lucide-react"
+import { cn } from "@/lib/utils"
 
 const placeholder: PersonaResult = {
   title: "等待分析",
-  industry: "上传 JD 后开始",
+  industry: "上传职位描述后开始",
   hardSkills: [],
   softSkills: [],
   businessPainPoints: [],
@@ -16,9 +17,10 @@ const placeholder: PersonaResult = {
 interface PersonaCardProps {
   persona?: PersonaResult | null
   isLoading?: boolean
+  className?: string
 }
 
-export function PersonaCard({ persona, isLoading }: PersonaCardProps) {
+export function PersonaCard({ persona, isLoading, className }: PersonaCardProps) {
   const data = persona ?? placeholder
   const tags = [...data.hardSkills, ...data.softSkills].slice(0, 8)
   const advices = data.optimizationAdvice.length
@@ -26,7 +28,7 @@ export function PersonaCard({ persona, isLoading }: PersonaCardProps) {
     : ["分析完成后将显示针对性优化建议"]
 
   return (
-    <div className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft">
+    <div className={cn("rounded-3xl border border-border/60 bg-card p-5 shadow-soft", className)}>
       <div className="flex items-center gap-2.5">
         <span className="flex size-9 items-center justify-center rounded-xl bg-accent text-primary">
           <Target className="size-5" aria-hidden="true" />

@@ -62,9 +62,9 @@ export function MatchScoreCard({ scores, isLoading }: MatchScoreCardProps) {
             <div className="absolute inset-3 rounded-full border border-dashed border-primary/30" />
             <Sparkles className="relative size-8 text-primary/70" aria-hidden="true" />
           </div>
-          <p className="text-sm font-medium text-foreground">完成 JD 解析后查看你的匹配度分析图</p>
+          <p className="text-sm font-medium text-foreground">完成职位描述解析后查看你的匹配度分析图</p>
           <p className="mt-1.5 max-w-[16rem] text-xs leading-relaxed text-muted-foreground">
-            上传岗位 JD 并完成分析后，这里会展示七维 before / after 评分
+            上传职位描述并完成分析后，这里会展示七维 before / after 评分
           </p>
         </div>
       </div>

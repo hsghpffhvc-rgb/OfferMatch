@@ -2,24 +2,40 @@
 
 import type React from "react"
 import { useEffect, useRef, useState } from "react"
-import { ArrowUp, FileText, Plus, Briefcase, Loader2 } from "lucide-react"
+import { FileText, Plus, Briefcase, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ReasoningPanel } from "@/components/reasoning-panel"
-import { ResumePreview } from "@/components/resume-preview"
+import { ResumePreview, useResumePreviewParts } from "@/components/resume-preview"
 import type { AgentStreamState } from "@/lib/hooks/use-agent-stream"
 import { extractFileText, FILE_ACCEPT, truncateFilename } from "@/lib/extract-file-text"
 import { getPersistedInputs, patchWorkspace } from "@/lib/workspace-session"
 import { AnalyticsEvent, track } from "@/lib/analytics"
+import { cn } from "@/lib/utils"
 
 interface HeroInputProps {
   state: AgentStreamState
   onAnalyze: (jd: string, resume: string) => void
+  /** 递增后清空输入框与已上传文件（开始新分析 / 清空工作台） */
+  resetKey?: number
+  children?: (parts: {
+    composer: React.ReactNode
+    reasoning: React.ReactNode
+    resumeMarkdown: React.ReactNode
+    resumePdf: React.ReactNode
+  }) => React.ReactNode
 }
 
 type UploadTarget = "resume" | "jd"
 
-export function HeroInput({ state, onAnalyze }: HeroInputProps) {
-  // 首屏用空状态，避免 SSR / 客户端因 localStorage 文案不一致触发 hydration mismatch
+const JD_PLACEHOLDER =
+  "把招聘软件（如 BOSS直聘/智联/猎聘）里的职位描述粘贴到这里，建议包含岗位职责 + 任职要求，AI 会更好地结合你的简历分析匹配度（或者点击「上传职位描述文件」导入PDF/Word/TXT）"
+
+export function HeroInput({
+  state,
+  onAnalyze,
+  resetKey = 0,
+  children,
+}: HeroInputProps) {
   const [jd, setJd] = useState("")
   const [resume, setResume] = useState("")
   const [resumeFileName, setResumeFileName] = useState<string | null>(null)
@@ -37,8 +53,19 @@ export function HeroInput({ state, onAnalyze }: HeroInputProps) {
   const isStreaming = state.status === "streaming"
   const isUploading = uploading !== null
 
-  // 挂载后再从 localStorage 恢复，保证服务端与首屏客户端 HTML 一致
   useEffect(() => {
+    if (resetKey > 0) {
+      setJd("")
+      setResume("")
+      setResumeFileName(null)
+      setJdFileName(null)
+      setResumePhoto(null)
+      setUploadError(null)
+      setUploadNotice(null)
+      setInputsHydrated(true)
+      return
+    }
+
     const saved = getPersistedInputs()
     setJd(saved.jd)
     setResume(saved.resume)
@@ -46,9 +73,8 @@ export function HeroInput({ state, onAnalyze }: HeroInputProps) {
     setJdFileName(saved.jdFileName)
     setResumePhoto(saved.resumePhoto)
     setInputsHydrated(true)
-  }, [])
+  }, [resetKey])
 
-  // 输入变化时同步到工作区（等恢复完成后再写，避免空值覆盖）
   useEffect(() => {
     if (!inputsHydrated) return
     patchWorkspace({
@@ -56,7 +82,6 @@ export function HeroInput({ state, onAnalyze }: HeroInputProps) {
     })
   }, [inputsHydrated, jd, resume, resumeFileName, jdFileName, resumePhoto])
 
-  // 分析结束后释放提交锁
   useEffect(() => {
     if (state.status !== "streaming") {
       submitLock.current = false
@@ -111,7 +136,7 @@ export function HeroInput({ state, onAnalyze }: HeroInputProps) {
 
       if (method === "ocr") {
         setUploadNotice(
-          `已通过 OCR 识别扫描版 PDF（${pageCount ?? "?"} 页），识别结果已填入${target === "jd" ? " JD 输入框" : "简历"}`,
+          `已通过 OCR 识别扫描版 PDF（${pageCount ?? "?"} 页），识别结果已填入${target === "jd" ? "职位描述输入框" : "简历"}`,
         )
       }
     } catch (error) {
@@ -133,98 +158,122 @@ export function HeroInput({ state, onAnalyze }: HeroInputProps) {
     ? "解析中…"
     : jdFileName
       ? truncateFilename(jdFileName)
-      : "上传 JD 文件"
+      : "上传职位描述文件"
+
+  const composer = (
+    <div className="flex h-full min-h-[280px] w-full flex-col">
+      <div className="flex h-full min-h-0 flex-1 flex-col rounded-3xl border border-border/70 bg-card p-2.5 shadow-soft">
+        <textarea
+          value={jd}
+          onChange={(e) => {
+            setJd(e.target.value)
+            if (jdFileName) setJdFileName(null)
+          }}
+          onKeyDown={handleKeyDown}
+          placeholder={JD_PLACEHOLDER}
+          disabled={isStreaming || isUploading}
+          className="min-h-0 w-full flex-1 resize-none rounded-2xl bg-transparent px-4 py-3 text-sm leading-relaxed text-foreground placeholder:text-muted-foreground focus:outline-none disabled:opacity-60"
+        />
+        <div className="flex flex-wrap items-center justify-between gap-2 px-1.5 pb-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <input
+              ref={resumeInputRef}
+              type="file"
+              accept={FILE_ACCEPT}
+              className="hidden"
+              onChange={(e) => handleFileUpload(e, "resume")}
+            />
+            <input
+              ref={jdInputRef}
+              type="file"
+              accept={FILE_ACCEPT}
+              className="hidden"
+              onChange={(e) => handleFileUpload(e, "jd")}
+            />
+            <UploadButton
+              icon={FileText}
+              label={resumeLabel}
+              onClick={() => resumeInputRef.current?.click()}
+              disabled={isStreaming || isUploading}
+              spinning={uploading === "resume"}
+              active={!!resume}
+            />
+            <UploadButton
+              icon={Briefcase}
+              label={jdLabel}
+              onClick={() => jdInputRef.current?.click()}
+              disabled={isStreaming || isUploading}
+              spinning={uploading === "jd"}
+              active={!!jdFileName}
+            />
+          </div>
+          <Button
+            aria-label="开始匹配"
+            onClick={handleAnalyze}
+            disabled={!jd.trim() || isStreaming || isUploading}
+            className="h-10 shrink-0 rounded-full px-6 text-sm font-bold text-white shadow-soft gradient-purple hover:scale-[1.02] disabled:pointer-events-none disabled:opacity-50"
+          >
+            {isStreaming ? (
+              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+            ) : (
+              "开始匹配"
+            )}
+          </Button>
+        </div>
+      </div>
+
+      {(uploadError || state.error) && (
+        <p className="mt-3 text-xs text-destructive" role="alert">
+          {uploadError ?? state.error}
+        </p>
+      )}
+      {uploadNotice && !uploadError && (
+        <p className="mt-3 text-xs text-primary" role="status">
+          {uploadNotice}
+        </p>
+      )}
+      {!uploadError && !state.error && !uploadNotice && (
+        <p className="mt-3 text-xs text-muted-foreground">
+          支持 PDF、Word（.doc / .docx）、TXT；扫描版 PDF 将自动 OCR 识别（最多 15 页，约需 30–90 秒）
+          {resume && resumeFileName && ` · 简历：${resumeFileName}`}
+        </p>
+      )}
+    </div>
+  )
+
+  const resumeParts = useResumePreviewParts({
+    markdown: state.rewrite?.rewrittenResumeMarkdown ?? "",
+    rewriteResult: state.rewrite,
+    isLoading: isStreaming && state.currentPhase === "C",
+    resumePhoto,
+  })
+
+  const reasoning = (
+    <ReasoningPanel
+      text={state.reasoningText}
+      currentPhase={state.currentPhase}
+      phaseMessage={state.phaseMessage}
+      isStreaming={isStreaming}
+    />
+  )
+
+  if (children) {
+    return (
+      <>
+        {children({
+          composer,
+          reasoning,
+          resumeMarkdown: resumeParts.markdown,
+          resumePdf: resumeParts.pdf,
+        })}
+      </>
+    )
+  }
 
   return (
     <section className="flex w-full flex-col items-center text-center">
-      <div className="w-full max-w-2xl">
-        <div className="rounded-3xl border border-border/70 bg-card p-2.5 shadow-soft">
-          <textarea
-            value={jd}
-            onChange={(e) => {
-              setJd(e.target.value)
-              if (jdFileName) setJdFileName(null)
-            }}
-            onKeyDown={handleKeyDown}
-            rows={4}
-            placeholder="粘贴目标岗位 JD，或点击「上传 JD 文件」导入 PDF / Word / TXT…"
-            disabled={isStreaming || isUploading}
-            className="w-full resize-none rounded-2xl bg-transparent px-4 py-3 text-sm leading-relaxed text-foreground placeholder:text-muted-foreground focus:outline-none disabled:opacity-60"
-          />
-          <div className="flex items-center justify-between gap-2 px-1.5 pb-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <input
-                ref={resumeInputRef}
-                type="file"
-                accept={FILE_ACCEPT}
-                className="hidden"
-                onChange={(e) => handleFileUpload(e, "resume")}
-              />
-              <input
-                ref={jdInputRef}
-                type="file"
-                accept={FILE_ACCEPT}
-                className="hidden"
-                onChange={(e) => handleFileUpload(e, "jd")}
-              />
-              <UploadButton
-                icon={FileText}
-                label={resumeLabel}
-                onClick={() => resumeInputRef.current?.click()}
-                disabled={isStreaming || isUploading}
-                spinning={uploading === "resume"}
-                active={!!resume}
-              />
-              <UploadButton
-                icon={Briefcase}
-                label={jdLabel}
-                onClick={() => jdInputRef.current?.click()}
-                disabled={isStreaming || isUploading}
-                spinning={uploading === "jd"}
-                active={!!jdFileName}
-              />
-            </div>
-            <Button
-              size="icon"
-              aria-label="开始分析"
-              onClick={handleAnalyze}
-              disabled={!jd.trim() || isStreaming || isUploading}
-              className="size-10 shrink-0 rounded-full gradient-purple text-primary-foreground shadow-soft transition-transform hover:scale-105 disabled:pointer-events-none disabled:opacity-50"
-            >
-              {isStreaming ? (
-                <Loader2 className="size-5 animate-spin" aria-hidden="true" />
-              ) : (
-                <ArrowUp className="size-5" aria-hidden="true" />
-              )}
-            </Button>
-          </div>
-        </div>
-
-        {(uploadError || state.error) && (
-          <p className="mt-3 text-xs text-destructive" role="alert">
-            {uploadError ?? state.error}
-          </p>
-        )}
-        {uploadNotice && !uploadError && (
-          <p className="mt-3 text-xs text-primary" role="status">
-            {uploadNotice}
-          </p>
-        )}
-        {!uploadError && !state.error && !uploadNotice && (
-          <p className="mt-3 text-xs text-muted-foreground">
-            支持 PDF、Word（.doc / .docx）、TXT；扫描版 PDF 将自动 OCR 识别（最多 15 页，约需 30–90 秒）
-            {resume && resumeFileName && ` · 简历：${resumeFileName}`}
-          </p>
-        )}
-      </div>
-
-      <ReasoningPanel
-        text={state.reasoningText}
-        currentPhase={state.currentPhase}
-        phaseMessage={state.phaseMessage}
-        isStreaming={isStreaming}
-      />
-
+      <div className="w-full max-w-2xl">{composer}</div>
+      {reasoning}
       <ResumePreview
         markdown={state.rewrite?.rewrittenResumeMarkdown ?? ""}
         rewriteResult={state.rewrite}
@@ -255,11 +304,12 @@ function UploadButton({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className={`group flex items-center gap-2 rounded-full border px-3.5 py-2 text-sm font-medium transition-colors disabled:opacity-50 ${
+      className={cn(
+        "group flex items-center gap-2 rounded-full border px-3.5 py-2 text-sm font-medium transition-colors disabled:opacity-50",
         active
           ? "border-primary/40 bg-primary/10 text-primary"
-          : "border-border bg-secondary/60 text-secondary-foreground hover:border-primary/40 hover:bg-accent"
-      }`}
+          : "border-border bg-secondary/60 text-secondary-foreground hover:border-primary/40 hover:bg-accent",
+      )}
     >
       <span className="flex size-5 items-center justify-center rounded-full bg-background text-primary shadow-sm">
         {spinning ? (
@@ -271,7 +321,7 @@ function UploadButton({
       {!spinning && (
         <Icon className="size-4 text-muted-foreground group-hover:text-foreground" aria-hidden="true" />
       )}
-      <span className="max-w-[8rem] truncate">{label}</span>
+      <span className="max-w-[11rem] truncate">{label}</span>
     </button>
   )
 }

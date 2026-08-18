@@ -118,7 +118,7 @@ export function HistoryList() {
                       {formatHistoryTime(record.createdAt)}
                     </span>
                     {record.industry && <span>{record.industry}</span>}
-                    <span>{record.hasResume ? "含原始简历" : "仅 JD 生成"}</span>
+                    <span>{record.hasResume ? "含原始简历" : "仅职位描述生成"}</span>
                     {record.interview && <span>含面试准备</span>}
                   </p>
                 </div>

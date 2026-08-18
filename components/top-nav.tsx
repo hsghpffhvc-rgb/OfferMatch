@@ -16,7 +16,7 @@ import {
   Sun,
   X,
 } from "lucide-react"
-import { ContactDialog } from "@/components/contact-dialog"
+import { FeedbackWidget } from "@/components/feedback/feedback-widget"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -111,7 +111,7 @@ export function TopNav({ onClearWorkspace }: TopNavProps) {
         </nav>
 
         <div className="flex items-center gap-2">
-          <ContactDialog />
+          <FeedbackWidget />
           <Button
             type="button"
             variant="ghost"

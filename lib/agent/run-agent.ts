@@ -71,7 +71,7 @@ async function streamPhase(
     status: "start",
     message:
       phase === "A"
-        ? "正在深度解析岗位 JD…"
+        ? "正在深度解析职位描述…"
         : phase === "B"
           ? "正在逆向推导理想简历大纲…"
           : phase === "C"

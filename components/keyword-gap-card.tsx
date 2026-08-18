@@ -54,7 +54,7 @@ export function KeywordGapCard({
           </span>
           <div>
             <p className="text-sm font-medium">关键词交叉比对</p>
-            <p className="text-xs text-muted-foreground">JD 关键词、命中与重写覆盖情况</p>
+            <p className="text-xs text-muted-foreground">职位描述关键词、命中与重写覆盖情况</p>
           </div>
         </div>
         <span className="rounded-full bg-accent px-2.5 py-0.5 text-xs font-semibold text-accent-foreground">
