@@ -34,6 +34,8 @@ const nextConfig = {
       './node_modules/@napi-rs/canvas/**/*',
     ],
     '/api/export-pdf': [
+      './public/fonts/NotoSansSC-Regular.ttf',
+      './public/fonts/NotoSansSC-Bold.ttf',
       './public/fonts/NotoSansSC-Regular.woff',
       './public/fonts/NotoSansSC-Bold.woff',
     ],

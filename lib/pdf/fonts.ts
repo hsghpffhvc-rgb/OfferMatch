@@ -9,8 +9,11 @@ export { RESUME_FONT_FAMILY }
 
 let registered = false
 
-const BUNDLED_REGULAR = "public/fonts/NotoSansSC-Regular.woff"
-const BUNDLED_BOLD = "public/fonts/NotoSansSC-Bold.woff"
+// 使用 TTF：react-pdf 对 WOFF 字号换算常偏小，线上会挤在 A4 上半页
+const BUNDLED_REGULAR = "public/fonts/NotoSansSC-Regular.ttf"
+const BUNDLED_BOLD = "public/fonts/NotoSansSC-Bold.ttf"
+const BUNDLED_REGULAR_FALLBACK = "public/fonts/NotoSansSC-Regular.woff"
+const BUNDLED_BOLD_FALLBACK = "public/fonts/NotoSansSC-Bold.woff"
 
 function bundledFontPath(relativePath: string): string {
   return path.join(process.cwd(), relativePath)
@@ -58,26 +61,32 @@ function systemFallbackFonts(): string[] {
   ]
 }
 
-/** 优先使用随仓库打包的 Noto Sans SC，避免 Vercel 无系统中文字体 */
+function firstExisting(paths: string[]): string | null {
+  return paths.find(fileExists) ?? null
+}
+
+/** 优先使用随仓库打包的 Noto Sans SC（TTF），避免 Vercel 无系统中文字体 */
 export function resolveBundledFontPaths(): { regular: string; bold: string } {
-  const regularBundled = bundledFontPath(BUNDLED_REGULAR)
-  const boldBundled = bundledFontPath(BUNDLED_BOLD)
+  const regular =
+    firstExisting([
+      bundledFontPath(BUNDLED_REGULAR),
+      bundledFontPath(BUNDLED_REGULAR_FALLBACK),
+    ]) ?? firstExisting(systemFallbackFonts())
 
-  if (fileExists(regularBundled)) {
-    return {
-      regular: regularBundled,
-      bold: fileExists(boldBundled) ? boldBundled : regularBundled,
-    }
-  }
-
-  const fallback = systemFallbackFonts().find(fileExists)
-  if (!fallback) {
+  if (!regular) {
     throw new Error(
-      "未找到中文字体：请确认 public/fonts/NotoSansSC-*.woff 已随部署打包（Vercel 需 outputFileTracingIncludes）"
+      "未找到中文字体：请确认 public/fonts/NotoSansSC-*.ttf 已随部署打包（Vercel 需 outputFileTracingIncludes）"
     )
   }
 
-  return { regular: fallback, bold: fallback }
+  const bold =
+    firstExisting([
+      bundledFontPath(BUNDLED_BOLD),
+      bundledFontPath(BUNDLED_BOLD_FALLBACK),
+      regular,
+    ]) ?? regular
+
+  return { regular, bold }
 }
 
 /** @deprecated 使用 resolveBundledFontPaths；保留供旧调用兼容 */

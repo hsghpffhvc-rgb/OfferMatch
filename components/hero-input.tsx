@@ -19,13 +19,13 @@ interface HeroInputProps {
 type UploadTarget = "resume" | "jd"
 
 export function HeroInput({ state, onAnalyze }: HeroInputProps) {
-  // 从工作区恢复 JD / 简历，避免跳转模板页后输入被清空
-  const persisted = getPersistedInputs()
-  const [jd, setJd] = useState(persisted.jd)
-  const [resume, setResume] = useState(persisted.resume)
-  const [resumeFileName, setResumeFileName] = useState<string | null>(persisted.resumeFileName)
-  const [jdFileName, setJdFileName] = useState<string | null>(persisted.jdFileName)
-  const [resumePhoto, setResumePhoto] = useState<string | null>(persisted.resumePhoto)
+  // 首屏用空状态，避免 SSR / 客户端因 localStorage 文案不一致触发 hydration mismatch
+  const [jd, setJd] = useState("")
+  const [resume, setResume] = useState("")
+  const [resumeFileName, setResumeFileName] = useState<string | null>(null)
+  const [jdFileName, setJdFileName] = useState<string | null>(null)
+  const [resumePhoto, setResumePhoto] = useState<string | null>(null)
+  const [inputsHydrated, setInputsHydrated] = useState(false)
   const [uploading, setUploading] = useState<UploadTarget | null>(null)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [uploadNotice, setUploadNotice] = useState<string | null>(null)
@@ -37,25 +37,24 @@ export function HeroInput({ state, onAnalyze }: HeroInputProps) {
   const isStreaming = state.status === "streaming"
   const isUploading = uploading !== null
 
-  // 硬刷新后补一次输入恢复（与 hooks 一致）
+  // 挂载后再从 localStorage 恢复，保证服务端与首屏客户端 HTML 一致
   useEffect(() => {
     const saved = getPersistedInputs()
-    if (!jd && saved.jd) setJd(saved.jd)
-    if (!resume && saved.resume) {
-      setResume(saved.resume)
-      setResumeFileName(saved.resumeFileName)
-      setResumePhoto(saved.resumePhoto)
-    }
-    if (!jdFileName && saved.jdFileName) setJdFileName(saved.jdFileName)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setJd(saved.jd)
+    setResume(saved.resume)
+    setResumeFileName(saved.resumeFileName)
+    setJdFileName(saved.jdFileName)
+    setResumePhoto(saved.resumePhoto)
+    setInputsHydrated(true)
   }, [])
 
-  // 输入变化时同步到工作区
+  // 输入变化时同步到工作区（等恢复完成后再写，避免空值覆盖）
   useEffect(() => {
+    if (!inputsHydrated) return
     patchWorkspace({
       inputs: { jd, resume, resumeFileName, jdFileName, resumePhoto },
     })
-  }, [jd, resume, resumeFileName, jdFileName, resumePhoto])
+  }, [inputsHydrated, jd, resume, resumeFileName, jdFileName, resumePhoto])
 
   // 分析结束后释放提交锁
   useEffect(() => {

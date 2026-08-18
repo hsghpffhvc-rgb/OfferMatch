@@ -157,14 +157,14 @@ export function ResumePdfPreview({
 
     try {
       let blob: Blob
-      let via: "client" | "api" = "client"
+      let via: "client" | "api" = "api"
       try {
-        blob = await renderPdfInBrowser(payload)
-      } catch (clientErr) {
-        // 客户端失败时再尝试服务端；若网络仍不通会在此抛出
-        console.warn("客户端 PDF 生成失败，尝试服务端:", clientErr)
-        via = "api"
+        // 优先服务端生成，避免浏览器主线程被中文字体渲染卡死
         blob = await renderPdfViaApi(payload, controller.signal)
+      } catch (apiErr) {
+        console.warn("服务端 PDF 生成失败，尝试客户端:", apiErr)
+        via = "client"
+        blob = await renderPdfInBrowser(payload)
       }
 
       const url = URL.createObjectURL(blob)
@@ -250,7 +250,7 @@ export function ResumePdfPreview({
     setPhotoError(null)
   }
 
-  // 关闭浏览器默认 PDF 工具栏/侧栏，改由我们自定义布局控制
+  // 桌面预览；移动端 iframe PDF 支持差，优先引导下载
   const previewSrc = pdfUrl
     ? `${pdfUrl}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`
     : null
@@ -282,7 +282,7 @@ export function ResumePdfPreview({
                   type="button"
                   onClick={() => setTemplateId(opt.id as TemplateId)}
                   className={cn(
-                    "rounded-full px-3.5 py-1.5 text-sm font-medium transition-all",
+                    "rounded-full px-3 py-1.5 text-xs font-medium transition-all sm:px-3.5 sm:text-sm",
                     selected
                       ? "border-2 border-[#A18AFF] bg-[#A18AFF]/15 text-[#9F7CFF] shadow-[0_4px_24px_rgba(161,138,255,0.12)]"
                       : "border border-border/70 bg-background/80 text-muted-foreground hover:border-[#A18AFF]/50 hover:text-foreground"
@@ -357,11 +357,11 @@ export function ResumePdfPreview({
           className="overflow-hidden rounded-2xl border border-border/50 bg-[#2b2b2b]"
         >
           {loading ? (
-            <div className="flex h-[800px] items-center justify-center text-sm text-muted-foreground">
+            <div className="flex h-[320px] items-center justify-center text-sm text-muted-foreground sm:h-[640px]">
               正在生成 PDF 预览…
             </div>
           ) : error ? (
-            <div className="flex h-[800px] flex-col items-center justify-center gap-3 px-4 text-center">
+            <div className="flex h-[320px] flex-col items-center justify-center gap-3 px-4 text-center sm:h-[640px]">
               <p className="text-sm text-destructive">{error}</p>
               <Button
                 variant="outline"
@@ -373,26 +373,37 @@ export function ResumePdfPreview({
               </Button>
             </div>
           ) : previewSrc ? (
-            // 左 30% 缩略图 / 右 70% 主预览；禁用浏览器自带 +/- 缩放条
-            <div className="grid h-[800px] grid-cols-[30%_70%]">
-              <aside className="flex items-start justify-center overflow-hidden border-r border-black/30 bg-[#3a3a3a] p-3">
-                <div className="h-full w-[90%] overflow-hidden rounded-md bg-white shadow-md">
-                  <iframe
-                    title="简历 PDF 缩略预览"
-                    src={previewSrc}
-                    className="pointer-events-none h-full w-full border-0 bg-white"
-                    tabIndex={-1}
-                  />
-                </div>
-              </aside>
+            <>
+              {/* 手机：iframe 常不可用，引导下载 */}
+              <div className="flex flex-col items-center gap-3 px-4 py-8 text-center sm:hidden">
+                <p className="text-sm text-white/90">
+                  手机端建议直接下载 PDF 查看（浏览器内预览支持有限）
+                </p>
+                <Button
+                  size="sm"
+                  className="gap-1.5 rounded-full gradient-purple text-primary-foreground"
+                  onClick={handleDownload}
+                >
+                  <Download className="size-3.5" aria-hidden="true" />
+                  下载 PDF
+                </Button>
+                <a
+                  href={pdfUrl ?? undefined}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-xs text-white/60 underline underline-offset-2"
+                >
+                  尝试在新标签页打开
+                </a>
+              </div>
 
-              <div className="relative h-full overflow-hidden bg-[#525659]">
+              {/* 桌面：单栏预览，避免双 iframe 卡顿 */}
+              <div className="relative hidden h-[640px] overflow-hidden bg-[#525659] sm:block">
                 <iframe
                   title="简历 PDF 主预览"
                   src={previewSrc}
                   className="h-full w-full border-0 bg-white"
                 />
-                {/* 悬停显示放大镜，点击打开大图预览 */}
                 <div
                   className="group absolute inset-0 z-10 cursor-zoom-in"
                   onClick={() => setLightboxOpen(true)}
@@ -411,9 +422,9 @@ export function ResumePdfPreview({
                   </span>
                 </div>
               </div>
-            </div>
+            </>
           ) : (
-            <div className="flex h-[800px] items-center justify-center text-sm text-muted-foreground">
+            <div className="flex h-[320px] items-center justify-center text-sm text-muted-foreground sm:h-[640px]">
               暂无预览
             </div>
           )}
@@ -433,7 +444,6 @@ export function ResumePdfPreview({
         </div>
       </div>
 
-      {/* 简历大图灯箱：右上角 X 关闭 */}
       {lightboxOpen && lightboxSrc && (
         <div
           className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm sm:p-8"

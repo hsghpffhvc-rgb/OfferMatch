@@ -19,8 +19,8 @@ const require = createRequire(import.meta.url)
 const { renderToBuffer, Font } = require("@react-pdf/renderer")
 const { createCanvas } = require("@napi-rs/canvas")
 
-const fontRegular = path.join(root, "public/fonts/NotoSansSC-Regular.woff")
-const fontBold = path.join(root, "public/fonts/NotoSansSC-Bold.woff")
+const fontRegular = path.join(root, "public/fonts/NotoSansSC-Regular.ttf")
+const fontBold = path.join(root, "public/fonts/NotoSansSC-Bold.ttf")
 
 // 与 lib/pdf/font-family.ts 的 RESUME_FONT_FAMILY 保持一致
 Font.register({

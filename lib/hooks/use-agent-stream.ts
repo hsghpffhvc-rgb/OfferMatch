@@ -128,22 +128,16 @@ function applyEvent(prev: AgentStreamState, event: StreamEvent): AgentStreamStat
 }
 
 export function useAgentStream() {
-  // 软跳转回首页时，优先用模块内存里的完成态，避免白屏闪一下
-  const [state, setState] = useState<AgentStreamState>(
-    () => getPersistedAgentState() ?? initialAgentStreamState,
-  )
+  // 首屏固定 idle，避免 localStorage 完成态与 SSR 不一致导致 hydration 报错
+  const [state, setState] = useState<AgentStreamState>(initialAgentStreamState)
   const abortRef = useRef<AbortController | null>(null)
   const stateRef = useRef(state)
   stateRef.current = state
 
-  // 硬刷新后从 storage 再补一次
+  // 挂载后再恢复（软跳转内存 / localStorage）
   useEffect(() => {
     const saved = getPersistedAgentState()
-    if (saved && state.status === "idle") {
-      setState(saved)
-    }
-    // 仅挂载时恢复
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (saved) setState(saved)
   }, [])
 
   // 增量持久化：每完成一个阶段 / 完成整轮都写入

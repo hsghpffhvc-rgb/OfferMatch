@@ -53,6 +53,11 @@ export interface PersistedInterviewState {
   progress?: InterviewProgress
 }
 
+export interface WorkspaceUiPrefs {
+  /** 用户点过「暂不开始」模拟面试 */
+  interviewPromptDismissed?: boolean
+}
+
 export interface WorkspaceSnapshot {
   agent: PersistedAgentState
   interview: PersistedInterviewState
@@ -60,6 +65,7 @@ export interface WorkspaceSnapshot {
   updatedAt: number
   /** 未完成会话的滚动定位 phase */
   resumePhase?: AgentPhase | null
+  ui?: WorkspaceUiPrefs
 }
 
 const emptyAgent: PersistedAgentState = {
@@ -181,6 +187,7 @@ export function patchWorkspace(partial: {
   interview?: PersistedInterviewState
   inputs?: Partial<WorkspaceInputs>
   resumePhase?: AgentPhase | null
+  ui?: Partial<WorkspaceUiPrefs>
 }): void {
   const current = ensureSnapshot()
   memory = {
@@ -190,6 +197,7 @@ export function patchWorkspace(partial: {
     updatedAt: Date.now(),
     resumePhase:
       partial.resumePhase !== undefined ? partial.resumePhase : current.resumePhase,
+    ui: partial.ui ? { ...current.ui, ...partial.ui } : current.ui,
   }
   writeStorage(memory)
 }
@@ -256,7 +264,16 @@ export function clearInterviewInWorkspace(): void {
       ...emptyInterview,
       progress: { currentQuestionIndex: 0, answers: {}, submittedQuestionIds: [] },
     },
+    ui: { interviewPromptDismissed: false },
   })
+}
+
+export function setInterviewPromptDismissed(dismissed: boolean): void {
+  patchWorkspace({ ui: { interviewPromptDismissed: dismissed } })
+}
+
+export function isInterviewPromptDismissed(): boolean {
+  return Boolean(getWorkspace()?.ui?.interviewPromptDismissed)
 }
 
 export function getPersistedAgentState(): PersistedAgentState | null {
@@ -304,7 +321,7 @@ export function getIncompleteInterviewState(): PersistedInterviewState | null {
   return null
 }
 
-export type IncompleteSessionKind = "analysis" | "interview" | "both"
+export type IncompleteSessionKind = "analysis" | "interview" | "both" | "done"
 
 export function detectIncompleteSession(): {
   kind: IncompleteSessionKind
@@ -327,25 +344,34 @@ export function detectIncompleteSession(): {
     && (snapshot.interview.progress?.submittedQuestionIds.length ?? 0)
       < snapshot.interview.interview.questions.length
 
-  if (!incompleteAgent && !incompleteInterview && !interviewPracticeIncomplete) {
-    return null
+  if (incompleteAgent || incompleteInterview || interviewPracticeIncomplete) {
+    let kind: IncompleteSessionKind = "analysis"
+    if ((incompleteInterview || interviewPracticeIncomplete) && incompleteAgent) {
+      kind = "both"
+    } else if (incompleteInterview || interviewPracticeIncomplete) {
+      kind = "interview"
+    }
+
+    return {
+      kind,
+      resumePhase:
+        snapshot.resumePhase
+        ?? incompleteAgent?.currentPhase
+        ?? (kind === "interview" ? "D" : "A"),
+      updatedAt: snapshot.updatedAt,
+    }
   }
 
-  let kind: IncompleteSessionKind = "analysis"
-  if ((incompleteInterview || interviewPracticeIncomplete) && incompleteAgent) {
-    kind = "both"
-  } else if (incompleteInterview || interviewPracticeIncomplete) {
-    kind = "interview"
+  // 分析已完成：也要用户确认「继续上次 / 开始新分析」，避免静默卡住旧状态
+  if (doneAgent) {
+    return {
+      kind: "done",
+      resumePhase: snapshot.resumePhase ?? "C",
+      updatedAt: snapshot.updatedAt,
+    }
   }
 
-  return {
-    kind,
-    resumePhase:
-      snapshot.resumePhase
-      ?? incompleteAgent?.currentPhase
-      ?? (kind === "interview" ? "D" : "A"),
-    updatedAt: snapshot.updatedAt,
-  }
+  return null
 }
 
 export function getPersistedInputs(): WorkspaceInputs {

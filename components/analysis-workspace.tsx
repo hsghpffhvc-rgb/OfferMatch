@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { RefreshCw } from "lucide-react"
+import { Eraser, RefreshCw } from "lucide-react"
 import { TopNav } from "@/components/top-nav"
 import { HeroInput } from "@/components/hero-input"
 import { InterviewPanel } from "@/components/interview-panel"
@@ -17,7 +17,6 @@ import {
   detectIncompleteSession,
   getIncompleteAgentState,
   getPersistedInputs,
-  getPersistedInterviewState,
   patchWorkspace,
   type IncompleteSessionKind,
 } from "@/lib/workspace-session"
@@ -31,28 +30,31 @@ import {
 
 export function AnalysisWorkspace() {
   const { state, analyze, reset, setState } = useAgentStream()
-  const [lastJd, setLastJd] = useState(() => getPersistedInputs().lastJd)
+  const [lastJd, setLastJd] = useState("")
   const [resumePrompt, setResumePrompt] = useState<{
     kind: IncompleteSessionKind
     resumePhase: AgentPhase | null
   } | null>(null)
+  const [sessionReady, setSessionReady] = useState(false)
 
   const isStreaming = state.status === "streaming"
   const isAnalysisDone = state.status === "done" && !!state.persona && !!state.rewrite
   const scores = state.rewrite?.scores ?? null
   const showFallbackBanner = Boolean(state.usedFallback || state.streamInterrupted)
 
-  // 硬刷新后恢复 lastJd，保证面试面板仍能拿到 JD
+  // 挂载后再恢复 lastJd，避免与 SSR 首屏不一致
   useEffect(() => {
     const saved = getPersistedInputs().lastJd
-    if (!lastJd && saved) setLastJd(saved)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (saved) setLastJd(saved)
   }, [])
 
-  // 启动时检测未完成会话
+  // 启动时检测可恢复会话（含已完成分析）
   useEffect(() => {
     const incomplete = detectIncompleteSession()
-    if (!incomplete) return
+    if (!incomplete) {
+      setSessionReady(true)
+      return
+    }
 
     // 若分析未完成，先把可恢复的中间态灌入 UI（避免卡在假 streaming）
     const partial = getIncompleteAgentState()
@@ -83,13 +85,17 @@ export function AnalysisWorkspace() {
       kind: incomplete.kind,
       resumePhase: incomplete.resumePhase,
     })
-    // 仅挂载时检测一次
+    // 有恢复弹窗时先挡住操作，等用户选择
+    setSessionReady(incomplete.kind !== "done" && incomplete.kind !== "analysis")
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const handleAnalyze = (jd: string, resume: string) => {
     setLastJd(jd)
-    patchWorkspace({ inputs: { lastJd: jd } })
+    patchWorkspace({
+      inputs: { lastJd: jd },
+      ui: { interviewPromptDismissed: false },
+    })
     analyze(jd, resume)
   }
 
@@ -104,13 +110,7 @@ export function AnalysisWorkspace() {
   const handleContinueSession = () => {
     const phase = resumePrompt?.resumePhase ?? null
     setResumePrompt(null)
-
-    // 面试练习进度已在 storage；确保完成态分析也已恢复
-    const interview = getPersistedInterviewState()
-    if (interview?.interview && state.status === "idle") {
-      // agent 完成态由 hook 自己恢复
-    }
-
+    setSessionReady(true)
     scrollToPhase(phase)
   }
 
@@ -119,11 +119,22 @@ export function AnalysisWorkspace() {
     reset()
     setLastJd("")
     setResumePrompt(null)
+    setSessionReady(true)
+  }
+
+  const handleClearWorkspace = () => {
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm("确定清空本机工作台？将删除当前分析结果与面试进度。")
+    ) {
+      return
+    }
+    handleDiscardSession()
   }
 
   return (
     <div className="min-h-screen bg-mesh">
-      <TopNav />
+      <TopNav onClearWorkspace={handleClearWorkspace} />
       {resumePrompt && (
         <ResumeSessionCard
           kind={resumePrompt.kind}
@@ -132,7 +143,7 @@ export function AnalysisWorkspace() {
           onDiscard={handleDiscardSession}
         />
       )}
-      <main className="mx-auto flex max-w-7xl flex-col px-4 py-10 sm:px-6 lg:px-8 lg:py-16">
+      <main className="mx-auto flex max-w-7xl flex-col px-4 py-8 sm:px-6 sm:py-10 lg:px-8 lg:py-16">
         <section className="mx-auto flex w-full max-w-3xl flex-col items-center text-center">
           <span className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/60 px-4 py-1.5 text-xs font-medium text-muted-foreground backdrop-blur">
             <span
@@ -142,9 +153,21 @@ export function AnalysisWorkspace() {
             {isStreaming ? "AI 正在分析…" : "AI 简历匹配引擎 · 实时分析"}
           </span>
           <HeroHeadline />
+          {(isAnalysisDone || Boolean(lastJd)) && sessionReady && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="mt-4 gap-1.5 rounded-full text-xs text-muted-foreground"
+              onClick={handleClearWorkspace}
+            >
+              <Eraser className="size-3.5" aria-hidden="true" />
+              清空工作台
+            </Button>
+          )}
         </section>
 
-        <section id="phase-analysis" className="mt-10 flex w-full flex-col gap-6">
+        <section id="phase-analysis" className="mt-8 flex w-full flex-col gap-6 sm:mt-10">
           {showFallbackBanner && (
             <div
               className="mx-auto flex w-full max-w-4xl flex-wrap items-center justify-between gap-3 rounded-2xl border border-border/60 bg-muted/40 px-4 py-3 text-sm text-muted-foreground"
@@ -174,10 +197,9 @@ export function AnalysisWorkspace() {
           )}
 
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_400px] lg:items-start">
-            {/* 左侧：输入 / 预览 / 面试助手同列同宽，保证卡片左缘对齐 */}
-            <div id="phase-C" className="flex w-full flex-col items-center">
+            <div id="phase-C" className="flex w-full min-w-0 flex-col items-center">
               <HeroInput state={state} onAnalyze={handleAnalyze} />
-              {isAnalysisDone && (
+              {isAnalysisDone && sessionReady && (
                 <InterviewPanel
                   jd={lastJd}
                   persona={state.persona}

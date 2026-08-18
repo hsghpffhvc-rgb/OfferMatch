@@ -12,18 +12,30 @@ interface ResumeSessionCardProps {
   onDiscard: () => void
 }
 
-const kindCopy: Record<IncompleteSessionKind, { title: string; body: string }> = {
+const kindCopy: Record<IncompleteSessionKind, { title: string; body: string; continueLabel: string; discardLabel: string }> = {
   analysis: {
     title: "你有未完成的简历优化",
     body: "检测到上次分析尚未完成，是否继续从中断处恢复？",
+    continueLabel: "继续",
+    discardLabel: "放弃重来",
   },
   interview: {
     title: "你有未完成的面试测评",
     body: "检测到上次模拟面试进度尚未完成，是否继续作答？",
+    continueLabel: "继续",
+    discardLabel: "放弃重来",
   },
   both: {
     title: "你有未完成的简历优化 / 面试测评",
     body: "检测到上次会话仍有未完成进度，是否继续？",
+    continueLabel: "继续",
+    discardLabel: "放弃重来",
+  },
+  done: {
+    title: "发现上次分析结果",
+    body: "浏览器里保存了上一次的简历分析。可继续查看，或清空后开始新的分析。",
+    continueLabel: "继续上次",
+    discardLabel: "开始新分析",
   },
 }
 
@@ -44,27 +56,27 @@ export function ResumeSessionCard({
         <h3 className="text-center text-lg font-semibold text-foreground">{copy.title}</h3>
         <p className="mt-2 text-center text-sm leading-relaxed text-muted-foreground">
           {copy.body}
-          {resumePhase ? (
+          {resumePhase && kind !== "done" ? (
             <span className="mt-1 block text-xs text-primary">
               将定位到阶段 {resumePhase}
             </span>
           ) : null}
         </p>
-        <div className="mt-6 flex items-center justify-center gap-3">
+        <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
           <Button
             variant="outline"
             onClick={onDiscard}
             className="gap-2 rounded-full px-4"
           >
             <RotateCcw className="size-4" aria-hidden="true" />
-            放弃重来
+            {copy.discardLabel}
           </Button>
           <Button
             onClick={onContinue}
             className="gap-2 rounded-full gradient-purple text-primary-foreground shadow-soft"
           >
             <Play className="size-4" aria-hidden="true" />
-            继续
+            {copy.continueLabel}
           </Button>
         </div>
       </div>

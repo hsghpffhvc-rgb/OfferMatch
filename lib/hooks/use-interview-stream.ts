@@ -41,41 +41,24 @@ export const initialInterviewStreamState: InterviewStreamState = {
 }
 
 export function useInterviewStream() {
-  const [state, setState] = useState<InterviewStreamState>(() => {
-    const saved = getPersistedInterviewState()
-    if (saved) {
-      return {
-        status: saved.status,
-        interview: saved.interview,
-        error: saved.error,
-        source: saved.source,
-        usedFallback: saved.usedFallback,
-        streamInterrupted: false,
-        progress: saved.progress ?? getInterviewProgress(),
-      }
-    }
-    return {
-      ...initialInterviewStreamState,
-      progress: getInterviewProgress(),
-    }
-  })
+  const [state, setState] = useState<InterviewStreamState>(
+    initialInterviewStreamState,
+  )
   const abortRef = useRef<AbortController | null>(null)
 
-  // 硬刷新后从 storage 恢复已完成的面试结果
+  // 挂载后再从 storage 恢复，避免 SSR hydration mismatch
   useEffect(() => {
     const saved = getPersistedInterviewState()
-    if (saved && state.status === "idle") {
-      setState({
-        status: saved.status,
-        interview: saved.interview,
-        error: saved.error,
-        source: saved.source,
-        usedFallback: saved.usedFallback,
-        streamInterrupted: false,
-        progress: saved.progress ?? getInterviewProgress(),
-      })
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (!saved) return
+    setState({
+      status: saved.status,
+      interview: saved.interview,
+      error: saved.error,
+      source: saved.source,
+      usedFallback: saved.usedFallback,
+      streamInterrupted: false,
+      progress: saved.progress ?? getInterviewProgress(),
+    })
   }, [])
 
   useEffect(() => {

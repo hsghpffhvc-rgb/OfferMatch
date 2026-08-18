@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import { Check, ChevronDown, Copy } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ResumePdfPreview } from "@/components/resume-pdf-preview"
@@ -43,10 +43,8 @@ export function ResumePreview({
 
   const mappedData = pdfMapping.data
 
-  // 首次分析完成后自动展开 PDF 面板
-  useEffect(() => {
-    if (rewriteResult) setPdfOpen(true)
-  }, [rewriteResult])
+  // 不自动展开 PDF：客户端渲染会卡住主线程（Chrome「此页面没有响应」）
+  // 由用户点击「简历预览 & 导出」再生成
 
   if (!markdown && !isLoading) return null
 
@@ -104,6 +102,9 @@ export function ResumePreview({
             aria-expanded={pdfOpen}
           >
             <span className="text-sm font-medium">📄 简历预览 & 导出</span>
+            <span className="text-xs text-muted-foreground">
+              {pdfOpen ? "收起" : "点击生成预览"}
+            </span>
             <ChevronDown
               className={cn(
                 "size-4 text-muted-foreground transition-transform",

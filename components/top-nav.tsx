@@ -1,18 +1,23 @@
 "use client"
 
+import { useState } from "react"
 import Link from "next/link"
 import { useTheme } from "next-themes"
 import {
   Check,
+  Eraser,
   FileText,
   History,
+  Menu,
   Monitor,
   Moon,
   Settings,
   Sparkles,
   Sun,
+  X,
 } from "lucide-react"
 import { ContactDialog } from "@/components/contact-dialog"
+import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -22,14 +27,20 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+
 const themeOptions = [
   { value: "light", label: "浅色", icon: Sun },
   { value: "dark", label: "深色", icon: Moon },
   { value: "system", label: "跟随系统", icon: Monitor },
 ]
 
-export function TopNav() {
+interface TopNavProps {
+  onClearWorkspace?: () => void
+}
+
+export function TopNav({ onClearWorkspace }: TopNavProps) {
   const { theme, setTheme } = useTheme()
+  const [mobileOpen, setMobileOpen] = useState(false)
 
   return (
     <header className="sticky top-0 z-30 border-b border-border/60 bg-background/70 backdrop-blur-xl">
@@ -47,26 +58,13 @@ export function TopNav() {
         </Link>
 
         <nav className="hidden items-center gap-1 md:flex" aria-label="主导航">
-          <DropdownMenu>
-            <DropdownMenuTrigger className="flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus:outline-none">
-              <FileText className="size-4" aria-hidden="true" />
-              简历模板
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-40">
-              <DropdownMenuGroup>
-                <DropdownMenuLabel>模板预览</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem className="cursor-pointer p-0">
-                  <Link
-                    href="/templates"
-                    className="block w-full px-1.5 py-1 text-sm text-foreground outline-none"
-                  >
-                    预览
-                  </Link>
-                </DropdownMenuItem>
-              </DropdownMenuGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <Link
+            href="/templates"
+            className="flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+          >
+            <FileText className="size-4" aria-hidden="true" />
+            简历模板
+          </Link>
 
           <Link
             href="/history"
@@ -75,6 +73,17 @@ export function TopNav() {
             <History className="size-4" aria-hidden="true" />
             历史记录
           </Link>
+
+          {onClearWorkspace && (
+            <button
+              type="button"
+              onClick={onClearWorkspace}
+              className="flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+            >
+              <Eraser className="size-4" aria-hidden="true" />
+              清空工作台
+            </button>
+          )}
 
           <DropdownMenu>
             <DropdownMenuTrigger className="flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus:outline-none">
@@ -101,8 +110,75 @@ export function TopNav() {
           </DropdownMenu>
         </nav>
 
-        <ContactDialog />
+        <div className="flex items-center gap-2">
+          <ContactDialog />
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="rounded-full md:hidden"
+            aria-expanded={mobileOpen}
+            aria-label={mobileOpen ? "关闭菜单" : "打开菜单"}
+            onClick={() => setMobileOpen((open) => !open)}
+          >
+            {mobileOpen ? (
+              <X className="size-5" aria-hidden="true" />
+            ) : (
+              <Menu className="size-5" aria-hidden="true" />
+            )}
+          </Button>
+        </div>
       </div>
+
+      {mobileOpen && (
+        <div className="border-t border-border/60 bg-background/95 px-4 py-3 md:hidden">
+          <nav className="flex flex-col gap-1" aria-label="移动端导航">
+            <Link
+              href="/templates"
+              onClick={() => setMobileOpen(false)}
+              className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-medium text-foreground hover:bg-secondary"
+            >
+              <FileText className="size-4" aria-hidden="true" />
+              简历模板
+            </Link>
+            <Link
+              href="/history"
+              onClick={() => setMobileOpen(false)}
+              className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-medium text-foreground hover:bg-secondary"
+            >
+              <History className="size-4" aria-hidden="true" />
+              历史记录
+            </Link>
+            {onClearWorkspace && (
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileOpen(false)
+                  onClearWorkspace()
+                }}
+                className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-foreground hover:bg-secondary"
+              >
+                <Eraser className="size-4" aria-hidden="true" />
+                清空工作台
+              </button>
+            )}
+            <div className="mt-2 flex flex-wrap gap-2 px-1">
+              {themeOptions.map(({ value, label, icon: Icon }) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setTheme(value)}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-border/60 px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary"
+                >
+                  <Icon className="size-3.5" aria-hidden="true" />
+                  {label}
+                  {theme === value && <Check className="size-3.5 text-primary" aria-hidden="true" />}
+                </button>
+              ))}
+            </div>
+          </nav>
+        </div>
+      )}
     </header>
   )
 }
