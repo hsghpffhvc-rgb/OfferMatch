@@ -215,15 +215,15 @@ export function AnalysisWorkspace() {
               {({ composer, reasoning, resumeMarkdown, resumePdf }) => (
                 <div
                   id="phase-C"
-                  className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[1fr_400px] lg:items-stretch"
+                  className="flex flex-col gap-6 lg:grid lg:grid-cols-[1fr_400px] lg:items-start"
                 >
-                  <div className="order-1 flex h-full min-h-0 min-w-0 w-full lg:col-start-1 lg:row-start-1">
+                  <div className="order-1 min-w-0 lg:col-start-1 lg:row-start-1">
                     {composer}
                   </div>
                   <PersonaCard
                     persona={state.persona}
                     isLoading={isStreaming}
-                    className="order-5 h-full lg:order-none lg:col-start-2 lg:row-start-1"
+                    className="order-5 h-full lg:col-start-2 lg:row-start-1"
                   />
 
                   {reasoning ? (
@@ -232,31 +232,33 @@ export function AnalysisWorkspace() {
                     </div>
                   ) : null}
 
-                  {/* 移动端：重写简历文字 → PDF 预览，紧挨在一起，位于人设/分析组件之前 */}
-                  <div className="order-3 flex min-w-0 flex-col gap-4 lg:col-start-1 lg:row-start-3">
+                  {/* 左：重写简历 | 右：整体匹配度（同一行顶对齐） */}
+                  <div className="order-3 min-w-0 lg:col-start-1 lg:row-start-3">
                     {resumeMarkdown}
-                    {resumePdf}
                   </div>
                   <div className="order-6 min-w-0 lg:col-start-2 lg:row-start-3">
                     <MatchScoreCard scores={scores} isLoading={isStreaming} />
                   </div>
-                  <div className="order-7 flex flex-col gap-6 lg:col-start-2 lg:row-start-4">
-                    <KeywordGapCard
-                      keywordAnalysis={scores?.keywordAnalysis ?? null}
-                      isLoading={isStreaming}
-                    />
-                    <StrengthWeaknessCard scores={scores} isLoading={isStreaming} />
-                  </div>
-                  {isAnalysisDone && sessionReady ? (
-                    <div className="order-8 min-w-0 lg:col-span-2 lg:row-start-5">
+
+                  {/* 左：PDF + 模拟面试（同宽）；右：关键词 + 亮点短板（顶对齐，展开 PDF 不影响右侧） */}
+                  <div className="order-4 flex min-w-0 flex-col gap-4 lg:col-start-1 lg:row-start-4">
+                    {resumePdf}
+                    {isAnalysisDone && sessionReady ? (
                       <InterviewPanel
                         jd={lastJd}
                         persona={state.persona}
                         rewrite={state.rewrite}
                         isAnalyzing={isStreaming}
                       />
-                    </div>
-                  ) : null}
+                    ) : null}
+                  </div>
+                  <div className="order-7 flex min-w-0 flex-col gap-6 lg:col-start-2 lg:row-start-4">
+                    <KeywordGapCard
+                      keywordAnalysis={scores?.keywordAnalysis ?? null}
+                      isLoading={isStreaming}
+                    />
+                    <StrengthWeaknessCard scores={scores} isLoading={isStreaming} />
+                  </div>
                 </div>
               )}
             </HeroInput>
