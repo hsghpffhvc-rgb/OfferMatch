@@ -12,11 +12,13 @@ import { PersonaCard } from "@/components/persona-card"
 import { ResumeSessionCard } from "@/components/resume-session-card"
 import { Button } from "@/components/ui/button"
 import { useAgentStream } from "@/lib/hooks/use-agent-stream"
+import type { InterviewStatus } from "@/lib/hooks/use-interview-stream"
 import {
   clearWorkspace,
   detectIncompleteSession,
   getIncompleteAgentState,
   getPersistedInputs,
+  getPersistedInterviewState,
   patchWorkspace,
   type IncompleteSessionKind,
 } from "@/lib/workspace-session"
@@ -38,6 +40,12 @@ export function AnalysisWorkspace() {
   } | null>(null)
   const [sessionReady, setSessionReady] = useState(false)
   const [inputsResetKey, setInputsResetKey] = useState(0)
+  const [interviewStatus, setInterviewStatus] = useState<InterviewStatus>("idle")
+
+  useEffect(() => {
+    const saved = getPersistedInterviewState()
+    if (saved?.status) setInterviewStatus(saved.status)
+  }, [])
 
   const isStreaming = state.status === "streaming"
   const isAnalysisDone = state.status === "done" && !!state.persona && !!state.rewrite
@@ -101,6 +109,7 @@ export function AnalysisWorkspace() {
 
   const handleAnalyze = (jd: string, resume: string) => {
     setLastJd(jd)
+    setInterviewStatus("idle")
     patchWorkspace({
       inputs: { lastJd: jd },
       ui: { interviewPromptDismissed: false },
@@ -211,14 +220,16 @@ export function AnalysisWorkspace() {
               state={state}
               onAnalyze={handleAnalyze}
               resetKey={inputsResetKey}
+              interviewStatus={interviewStatus}
             >
-              {({ composer, reasoning, resumeMarkdown, resumePdf }) => (
+              {({ composer, phaseProgress, resumeMarkdown, resumePdf }) => (
                 <div
                   id="phase-C"
                   className="flex flex-col gap-6 lg:grid lg:grid-cols-[1fr_400px] lg:items-start"
                 >
-                  <div className="order-1 min-w-0 lg:col-start-1 lg:row-start-1">
+                  <div className="order-1 flex min-w-0 flex-col gap-3 lg:col-start-1 lg:row-start-1">
                     {composer}
+                    {phaseProgress}
                   </div>
                   <PersonaCard
                     persona={state.persona}
@@ -226,22 +237,16 @@ export function AnalysisWorkspace() {
                     className="order-5 h-full lg:col-start-2 lg:row-start-1"
                   />
 
-                  {reasoning ? (
-                    <div className="order-2 min-w-0 lg:col-span-2 lg:row-start-2">
-                      {reasoning}
-                    </div>
-                  ) : null}
-
                   {/* 左：重写简历 | 右：整体匹配度（同一行顶对齐） */}
-                  <div className="order-3 min-w-0 lg:col-start-1 lg:row-start-3">
+                  <div className="order-3 min-w-0 lg:col-start-1 lg:row-start-2">
                     {resumeMarkdown}
                   </div>
-                  <div className="order-6 min-w-0 lg:col-start-2 lg:row-start-3">
+                  <div className="order-6 min-w-0 lg:col-start-2 lg:row-start-2">
                     <MatchScoreCard scores={scores} isLoading={isStreaming} />
                   </div>
 
-                  {/* 左：PDF + 模拟面试（同宽）；右：关键词 + 亮点短板（顶对齐，展开 PDF 不影响右侧） */}
-                  <div className="order-4 flex min-w-0 flex-col gap-4 lg:col-start-1 lg:row-start-4">
+                  {/* 左：PDF + 模拟面试（同宽）；右：关键词 + 亮点短板 */}
+                  <div className="order-4 flex min-w-0 flex-col gap-4 lg:col-start-1 lg:row-start-3">
                     {resumePdf}
                     {isAnalysisDone && sessionReady ? (
                       <InterviewPanel
@@ -249,10 +254,11 @@ export function AnalysisWorkspace() {
                         persona={state.persona}
                         rewrite={state.rewrite}
                         isAnalyzing={isStreaming}
+                        onStatusChange={setInterviewStatus}
                       />
                     ) : null}
                   </div>
-                  <div className="order-7 flex min-w-0 flex-col gap-6 lg:col-start-2 lg:row-start-4">
+                  <div className="order-7 flex min-w-0 flex-col gap-6 lg:col-start-2 lg:row-start-3">
                     <KeywordGapCard
                       keywordAnalysis={scores?.keywordAnalysis ?? null}
                       isLoading={isStreaming}
