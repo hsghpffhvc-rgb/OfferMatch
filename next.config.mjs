@@ -1,9 +1,36 @@
-const POSTHOG_REMOTE_HOST =
-  process.env.NEXT_PUBLIC_POSTHOG_HOST || 'https://us.i.posthog.com'
-const POSTHOG_ASSETS_HOST = POSTHOG_REMOTE_HOST.replace(
-  '://us.i.',
-  '://us-assets.i.',
-)
+/** PostHog 反向代理目标：构建时规范化 env，避免 Vercel 上 destination 非法 */
+function resolvePostHogRewriteHosts() {
+  const fallback = {
+    api: "https://us.i.posthog.com",
+    assets: "https://us-assets.i.posthog.com",
+  }
+
+  const raw = (process.env.NEXT_PUBLIC_POSTHOG_HOST || "").trim()
+  if (!raw) return fallback
+
+  const normalized = /^https?:\/\//i.test(raw)
+    ? raw
+    : `https://${raw.replace(/^\/+/, "")}`
+
+  try {
+    const origin = new URL(normalized).origin
+    if (!origin.startsWith("http")) return fallback
+
+    let assets = origin
+    if (origin.includes("://us.i.")) {
+      assets = origin.replace("://us.i.", "://us-assets.i.")
+    } else if (origin.includes("://eu.i.")) {
+      assets = origin.replace("://eu.i.", "://eu-assets.i.")
+    }
+
+    return { api: origin, assets }
+  } catch {
+    return fallback
+  }
+}
+
+const { api: POSTHOG_REMOTE_HOST, assets: POSTHOG_ASSETS_HOST } =
+  resolvePostHogRewriteHosts()
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
