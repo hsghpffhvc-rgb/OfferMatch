@@ -19,6 +19,7 @@ import {
   restoreHistoryToWorkspace,
   type HistoryRecord,
 } from "@/lib/history-storage"
+import { AnalyticsEvent, track } from "@/lib/analytics"
 
 export function HistoryList() {
   const router = useRouter()
@@ -30,6 +31,12 @@ export function HistoryList() {
 
   useEffect(() => {
     refresh()
+    track(AnalyticsEvent.historyViewed, {
+      page: "history_list",
+      record_count: listHistoryRecords().length,
+    })
+    // 仅进入页面时记一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refresh])
 
   const handleDelete = (id: string) => {
@@ -46,6 +53,11 @@ export function HistoryList() {
 
   const handleRestore = (record: HistoryRecord) => {
     restoreHistoryToWorkspace(record)
+    track(AnalyticsEvent.historyRestored, {
+      from: "history_list",
+      has_interview: Boolean(record.interview),
+      overall_score: record.overallAfter,
+    })
     router.push("/")
   }
 

@@ -1,5 +1,30 @@
+const POSTHOG_REMOTE_HOST =
+  process.env.NEXT_PUBLIC_POSTHOG_HOST || 'https://us.i.posthog.com'
+const POSTHOG_ASSETS_HOST = POSTHOG_REMOTE_HOST.replace(
+  '://us.i.',
+  '://us-assets.i.',
+)
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // PostHog API 使用尾斜杠，避免 Next.js 重定向破坏事件上报
+  skipTrailingSlashRedirect: true,
+  async rewrites() {
+    return [
+      {
+        source: '/ingest/static/:path*',
+        destination: `${POSTHOG_ASSETS_HOST}/static/:path*`,
+      },
+      {
+        source: '/ingest/array/:path*',
+        destination: `${POSTHOG_ASSETS_HOST}/array/:path*`,
+      },
+      {
+        source: '/ingest/:path*',
+        destination: `${POSTHOG_REMOTE_HOST}/:path*`,
+      },
+    ]
+  },
   typescript: {
     ignoreBuildErrors: true,
   },

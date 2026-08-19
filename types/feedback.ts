@@ -56,6 +56,8 @@ export interface FeedbackPayload {
   errorText?: string
   message?: string
   contact?: string
+  /** 1–5，步进 0.5；未评不传 */
+  rating?: number
   page?: string
 }
 

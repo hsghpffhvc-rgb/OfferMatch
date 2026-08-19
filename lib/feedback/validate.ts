@@ -12,6 +12,14 @@ import {
 const BUG_STEP_SET = new Set<string>(BUG_STEPS)
 const STUCK_STEP_SET = new Set<string>(STUCK_STEPS)
 
+const RATING_STEPS = [0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5] as const
+
+function parseRating(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined
+  const snapped = Math.round(value * 2) / 2
+  return (RATING_STEPS as readonly number[]).includes(snapped) ? snapped : undefined
+}
+
 export interface FeedbackFormValues {
   type: FeedbackType | null
   bugSteps: BugStep[]
@@ -20,6 +28,7 @@ export interface FeedbackFormValues {
   errorText: string
   message: string
   contact: string
+  rating: number | null
 }
 
 function isFeedbackType(value: unknown): value is FeedbackType {
@@ -46,6 +55,7 @@ export function validateFeedbackForm(
   const contact = values.contact.trim().slice(0, 120)
   const message = values.message.trim().slice(0, 2000)
   const errorText = values.errorText.trim().slice(0, 2000)
+  const rating = parseRating(values.rating)
 
   if (values.type === "bug") {
     const steps = uniqueSteps(values.bugSteps, BUG_STEP_SET)
@@ -69,6 +79,7 @@ export function validateFeedbackForm(
         errorText,
         reproducible: values.reproducible === true,
         contact: contact || undefined,
+        rating,
       },
     }
   }
@@ -84,6 +95,7 @@ export function validateFeedbackForm(
         type: "stuck",
         steps,
         contact: contact || undefined,
+        rating,
       },
     }
   }
@@ -98,6 +110,7 @@ export function validateFeedbackForm(
         type: "feature",
         message,
         contact: contact || undefined,
+        rating,
       },
     }
   }
@@ -111,6 +124,7 @@ export function validateFeedbackForm(
       type: "other",
       message,
       contact: contact || undefined,
+      rating,
     },
   }
 }
@@ -145,6 +159,7 @@ export function parseFeedbackBody(
           : "",
     message: typeof raw.message === "string" ? raw.message : "",
     contact: typeof raw.contact === "string" ? raw.contact : "",
+    rating: parseRating(raw.rating) ?? null,
   }
 
   const result = validateFeedbackForm(values)

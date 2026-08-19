@@ -10,8 +10,9 @@ import { DialogDescription, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Textarea } from "@/components/ui/textarea"
+import { StarRating } from "@/components/feedback/star-rating"
 import { validateFeedbackForm } from "@/lib/feedback/validate"
-import { track } from "@/lib/analytics"
+import { AnalyticsEvent, hashString, identify, track } from "@/lib/analytics"
 import { cn } from "@/lib/utils"
 import {
   BUG_STEPS,
@@ -54,6 +55,7 @@ export function FeedbackForm({ onBusyChange, onClose }: FeedbackFormProps) {
   const [errorText, setErrorText] = useState("")
   const [message, setMessage] = useState("")
   const [contact, setContact] = useState("")
+  const [rating, setRating] = useState<number | null>(null)
   const [errors, setErrors] = useState<FeedbackFieldErrors>({})
   const [submitError, setSubmitError] = useState("")
   const [submitting, setSubmitting] = useState(false)
@@ -69,6 +71,7 @@ export function FeedbackForm({ onBusyChange, onClose }: FeedbackFormProps) {
       errorText,
       message,
       contact,
+      rating,
     })
     if (!result.ok) {
       setErrors(result.errors)
@@ -93,11 +96,16 @@ export function FeedbackForm({ onBusyChange, onClose }: FeedbackFormProps) {
         return
       }
       setDone(true)
-      track("feedback_submitted", {
+      track(AnalyticsEvent.feedbackSubmitted, {
         type: result.data.type,
         hasContact: Boolean(result.data.contact),
         stepCount: result.data.steps?.length ?? 0,
+        rating: result.data.rating ?? 0,
       })
+      if (result.data.contact) {
+        // 用哈希关联访客，不把邮箱/微信原文上报 PostHog
+        identify(hashString(result.data.contact))
+      }
     } catch {
       setSubmitError("网络异常，提交失败")
     } finally {
@@ -336,6 +344,16 @@ export function FeedbackForm({ onBusyChange, onClose }: FeedbackFormProps) {
             <FieldError message={errors.message} />
           </div>
         )}
+
+        <div className="mt-5">
+          <p className="text-sm font-medium">整体评分</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            最高 5 星，可半星点选（选填）
+          </p>
+          <div className="mt-2">
+            <StarRating value={rating} onChange={setRating} id="fb-rating" />
+          </div>
+        </div>
 
         <div className="mt-5">
           <label htmlFor="fb-contact" className="text-sm font-medium">

@@ -16,6 +16,7 @@ import {
   restoreHistoryToWorkspace,
   type HistoryRecord,
 } from "@/lib/history-storage"
+import { AnalyticsEvent, track } from "@/lib/analytics"
 
 interface HistoryDetailProps {
   id: string
@@ -27,8 +28,18 @@ export function HistoryDetail({ id }: HistoryDetailProps) {
   const [ready, setReady] = useState(false)
 
   useEffect(() => {
-    setRecord(getHistoryRecord(id))
+    const record = getHistoryRecord(id)
+    setRecord(record)
     setReady(true)
+    if (record) {
+      track(AnalyticsEvent.historyViewed, {
+        page: "history_detail",
+        has_interview: Boolean(record.interview),
+        overall_score: record.overallAfter,
+      })
+    }
+    // 仅进入页面时记一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id])
 
   if (!ready) {
@@ -51,6 +62,11 @@ export function HistoryDetail({ id }: HistoryDetailProps) {
 
   const handleRestore = () => {
     restoreHistoryToWorkspace(record)
+    track(AnalyticsEvent.historyRestored, {
+      from: "history_detail",
+      has_interview: Boolean(record.interview),
+      overall_score: record.overallAfter,
+    })
     router.push("/")
   }
 

@@ -41,6 +41,10 @@ export function TemplatesPlayground() {
   const selectTemplate = useCallback(
     (id: TemplateId) => {
       setTemplateId(id)
+      track(AnalyticsEvent.templatesViewed, {
+        template: id,
+        action: "select",
+      })
       const params = new URLSearchParams(searchParams.toString())
       params.set("template", id)
       router.replace(`${pathname}?${params.toString()}`, { scroll: false })

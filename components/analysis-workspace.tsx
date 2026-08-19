@@ -27,6 +27,7 @@ import {
   getFallbackPersona,
   getFallbackRewrite,
 } from "@/lib/agent/fallback-content"
+import { AnalyticsEvent, track } from "@/lib/analytics"
 
 export function AnalysisWorkspace() {
   const { state, analyze, reset, setState } = useAgentStream()
@@ -42,6 +43,13 @@ export function AnalysisWorkspace() {
   const isAnalysisDone = state.status === "done" && !!state.persona && !!state.rewrite
   const scores = state.rewrite?.scores ?? null
   const showFallbackBanner = Boolean(state.usedFallback || state.streamInterrupted)
+
+  // 记录首页访问（漏斗入口）
+  useEffect(() => {
+    track(AnalyticsEvent.homeViewed, {})
+    // 仅挂载时记一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // 挂载后再恢复 lastJd，避免与 SSR 首屏不一致
   useEffect(() => {
@@ -205,42 +213,51 @@ export function AnalysisWorkspace() {
               resetKey={inputsResetKey}
             >
               {({ composer, reasoning, resumeMarkdown, resumePdf }) => (
-                <>
-                  <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_400px] lg:items-stretch">
-                    <div className="flex h-full min-h-0 min-w-0 w-full">{composer}</div>
-                    <PersonaCard
-                      persona={state.persona}
-                      isLoading={isStreaming}
-                      className="h-full"
-                    />
+                <div
+                  id="phase-C"
+                  className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[1fr_400px] lg:items-stretch"
+                >
+                  <div className="order-1 flex h-full min-h-0 min-w-0 w-full lg:col-start-1 lg:row-start-1">
+                    {composer}
                   </div>
+                  <PersonaCard
+                    persona={state.persona}
+                    isLoading={isStreaming}
+                    className="order-5 h-full lg:order-none lg:col-start-2 lg:row-start-1"
+                  />
 
-                  {reasoning ? <div className="mt-6">{reasoning}</div> : null}
-
-                  <div
-                    id="phase-C"
-                    className="mt-6 grid grid-cols-1 items-start gap-6 lg:grid-cols-[1fr_400px]"
-                  >
-                    <div className="min-w-0">{resumeMarkdown}</div>
-                    <MatchScoreCard scores={scores} isLoading={isStreaming} />
-                    <div className="min-w-0">{resumePdf}</div>
-                    <div className="flex flex-col gap-6">
-                      <KeywordGapCard
-                        keywordAnalysis={scores?.keywordAnalysis ?? null}
-                        isLoading={isStreaming}
-                      />
-                      <StrengthWeaknessCard scores={scores} isLoading={isStreaming} />
+                  {reasoning ? (
+                    <div className="order-2 min-w-0 lg:col-span-2 lg:row-start-2">
+                      {reasoning}
                     </div>
-                    {isAnalysisDone && sessionReady ? (
+                  ) : null}
+
+                  {/* 移动端：重写简历文字 → PDF 预览，紧挨在一起，位于人设/分析组件之前 */}
+                  <div className="order-3 flex min-w-0 flex-col gap-4 lg:col-start-1 lg:row-start-3">
+                    {resumeMarkdown}
+                    {resumePdf}
+                  </div>
+                  <div className="order-6 min-w-0 lg:col-start-2 lg:row-start-3">
+                    <MatchScoreCard scores={scores} isLoading={isStreaming} />
+                  </div>
+                  <div className="order-7 flex flex-col gap-6 lg:col-start-2 lg:row-start-4">
+                    <KeywordGapCard
+                      keywordAnalysis={scores?.keywordAnalysis ?? null}
+                      isLoading={isStreaming}
+                    />
+                    <StrengthWeaknessCard scores={scores} isLoading={isStreaming} />
+                  </div>
+                  {isAnalysisDone && sessionReady ? (
+                    <div className="order-8 min-w-0 lg:col-span-2 lg:row-start-5">
                       <InterviewPanel
                         jd={lastJd}
                         persona={state.persona}
                         rewrite={state.rewrite}
                         isAnalyzing={isStreaming}
                       />
-                    ) : null}
-                  </div>
-                </>
+                    </div>
+                  ) : null}
+                </div>
               )}
             </HeroInput>
           </div>

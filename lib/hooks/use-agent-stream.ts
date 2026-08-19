@@ -229,9 +229,13 @@ export function useAgentStream() {
           const event = JSON.parse(json) as StreamEvent
           if (event.type === "done") {
             receivedDone = true
+            const overall = event.data.rewrite?.scores?.overallAfter
             track(AnalyticsEvent.analysisCompleted, {
               has_resume: hasResume,
               duration_ms: Date.now() - startedAt,
+              overall_score: typeof overall === "number" ? overall : null,
+              industry: event.data.persona?.industry?.slice(0, 40) ?? null,
+              source: event.source ?? event.data.source ?? "model",
             })
             // 完整生成成功后写入本地历史记录
             try {

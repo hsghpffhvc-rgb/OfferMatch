@@ -194,6 +194,10 @@ export function ResumePdfPreview({
         message = err.message
       }
       setError(message)
+      track(AnalyticsEvent.pdfExportFailed, {
+        template: templateId,
+        message: message.slice(0, 120),
+      })
     } finally {
       window.clearTimeout(timeoutId)
       setLoading(false)

@@ -113,7 +113,7 @@ export function InterviewCard({
       </button>
 
       {expanded && (
-        <div className="mt-4 border-t border-border/40 pt-4 pl-10">
+        <div className="mt-4 border-t border-border/40 pt-4 pl-0 sm:pl-10">
           {/* 考察意图：轻量一行，不抢示范回答的视觉重心 */}
           <div className="mb-3 flex gap-2">
             <Target className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
@@ -154,19 +154,21 @@ export function InterviewCard({
             </div>
           </div>
 
-          {/* ★ 核心区：示范回答（最显眼） */}
-          <div className="rounded-xl border border-green-200 bg-green-50 p-4">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="text-xs font-semibold text-green-700">参考回答示范</span>
+          {/* 浅色底 + color-scheme:light，避免系统深色模式下 text-foreground 变成浅色字而看不见 */}
+          <div className="rounded-xl border border-green-200 bg-green-50 p-4 [color-scheme:light]">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold text-green-900">
+                参考回答示范
+              </span>
               <button
                 type="button"
                 onClick={copyAnswer}
-                className="text-xs text-green-600 hover:underline"
+                className="shrink-0 text-xs font-medium text-green-800 hover:underline"
               >
                 {copied ? "已复制" : "复制话术"}
               </button>
             </div>
-            <p className="whitespace-pre-line text-sm leading-relaxed text-foreground">
+            <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-green-950">
               {question.referenceAnswer}
             </p>
           </div>
