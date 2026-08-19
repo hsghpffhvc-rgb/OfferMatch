@@ -4,7 +4,8 @@ import type React from "react"
 import { useEffect, useRef, useState } from "react"
 import { FileText, Plus, Briefcase, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { ReasoningPanel } from "@/components/reasoning-panel"
+import { PhaseProgressPanel } from "@/components/phase-progress-panel"
+import type { InterviewStatus } from "@/lib/hooks/use-interview-stream"
 import { ResumePreview, useResumePreviewParts } from "@/components/resume-preview"
 import type { AgentStreamState } from "@/lib/hooks/use-agent-stream"
 import { extractFileText, FILE_ACCEPT, truncateFilename } from "@/lib/extract-file-text"
@@ -17,9 +18,10 @@ interface HeroInputProps {
   onAnalyze: (jd: string, resume: string) => void
   /** 递增后清空输入框与已上传文件（开始新分析 / 清空工作台） */
   resetKey?: number
+  interviewStatus?: InterviewStatus
   children?: (parts: {
     composer: React.ReactNode
-    reasoning: React.ReactNode
+    phaseProgress: React.ReactNode
     resumeMarkdown: React.ReactNode
     resumePdf: React.ReactNode
   }) => React.ReactNode
@@ -34,6 +36,7 @@ export function HeroInput({
   state,
   onAnalyze,
   resetKey = 0,
+  interviewStatus = "idle",
   children,
 }: HeroInputProps) {
   const [jd, setJd] = useState("")
@@ -248,13 +251,8 @@ export function HeroInput({
     resumePhoto,
   })
 
-  const reasoning = (
-    <ReasoningPanel
-      text={state.reasoningText}
-      currentPhase={state.currentPhase}
-      phaseMessage={state.phaseMessage}
-      isStreaming={isStreaming}
-    />
+  const phaseProgress = (
+    <PhaseProgressPanel state={state} interviewStatus={interviewStatus} />
   )
 
   if (children) {
@@ -262,7 +260,7 @@ export function HeroInput({
       <>
         {children({
           composer,
-          reasoning,
+          phaseProgress,
           resumeMarkdown: resumeParts.markdown,
           resumePdf: resumeParts.pdf,
         })}
@@ -273,7 +271,7 @@ export function HeroInput({
   return (
     <section className="flex w-full flex-col items-center text-center">
       <div className="w-full max-w-2xl">{composer}</div>
-      {reasoning}
+      {phaseProgress}
       <ResumePreview
         markdown={state.rewrite?.rewrittenResumeMarkdown ?? ""}
         rewriteResult={state.rewrite}

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { AlertCircle, ClipboardList, Loader2, RefreshCw, Sparkles } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { InterviewCard } from "@/components/interview-card"
-import { useInterviewStream } from "@/lib/hooks/use-interview-stream"
+import { useInterviewStream, type InterviewStatus } from "@/lib/hooks/use-interview-stream"
 import { buildInterviewContext } from "@/lib/agent/interview-context"
 import { validateInterviewBank } from "@/lib/agent/interview-fallback"
 import type { PersonaResult, RewriteResult } from "@/lib/agent/types"
@@ -16,9 +16,16 @@ interface InterviewPanelProps {
   persona: PersonaResult | null
   rewrite: RewriteResult | null
   isAnalyzing: boolean
+  onStatusChange?: (status: InterviewStatus) => void
 }
 
-export function InterviewPanel({ jd, persona, rewrite, isAnalyzing }: InterviewPanelProps) {
+export function InterviewPanel({
+  jd,
+  persona,
+  rewrite,
+  isAnalyzing,
+  onStatusChange,
+}: InterviewPanelProps) {
   const { state, startInterview, reset, submitAnswer } = useInterviewStream()
   const [starting, setStarting] = useState(false)
   const startLock = useRef(false)
@@ -27,6 +34,10 @@ export function InterviewPanel({ jd, persona, rewrite, isAnalyzing }: InterviewP
   const bankReady = bankCheck.ok
 
   // 恢复到未完成作答的题目
+  useEffect(() => {
+    onStatusChange?.(state.status)
+  }, [onStatusChange, state.status])
+
   useEffect(() => {
     if (state.status !== "done" || !state.interview) return
     const index = state.progress.currentQuestionIndex
