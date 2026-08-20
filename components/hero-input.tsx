@@ -94,6 +94,13 @@ export function HeroInput({
   const handleAnalyze = () => {
     if (!jd.trim() || isStreaming || isUploading || submitLock.current) return
     submitLock.current = true
+    // 粘贴进入的 JD 没有走文件上传埋点，在开始匹配时补上
+    if (!jdFileName) {
+      track(AnalyticsEvent.jdUploaded, {
+        method: "paste",
+        chars: jd.trim().length,
+      })
+    }
     onAnalyze(jd.trim(), resume.trim())
   }
 

@@ -177,6 +177,7 @@ export function useAgentStream() {
     })
 
     let receivedDone = false
+    let completedTracked = false
 
     try {
       const response = await fetch("/api/chat", {
@@ -229,6 +230,7 @@ export function useAgentStream() {
           const event = JSON.parse(json) as StreamEvent
           if (event.type === "done") {
             receivedDone = true
+            completedTracked = true
             const overall = event.data.rewrite?.scores?.overallAfter
             track(AnalyticsEvent.analysisCompleted, {
               has_resume: hasResume,
@@ -248,18 +250,24 @@ export function useAgentStream() {
             } catch {
               // 历史写入失败不影响主流程
             }
-          } else if (event.type === "error") {
-            track(AnalyticsEvent.analysisFailed, {
-              has_resume: hasResume,
-              message: event.message.slice(0, 120),
-            })
           }
+          // stream error 可能随后走 fallback，失败埋点只在硬失败路径上报
           setState((prev) => applyEvent(prev, event))
         }
       }
 
       // SSE 正常结束但未收到 done：视为流中断，灌入示例数据
       if (!receivedDone && !controller.signal.aborted) {
+        if (!completedTracked) {
+          completedTracked = true
+          track(AnalyticsEvent.analysisCompleted, {
+            has_resume: hasResume,
+            duration_ms: Date.now() - startedAt,
+            overall_score: null,
+            industry: null,
+            source: "fallback",
+          })
+        }
         setState((prev) => {
           if (prev.status === "done" && prev.rewrite) {
             return { ...prev, usedFallback: prev.usedFallback, streamInterrupted: true }
@@ -280,12 +288,12 @@ export function useAgentStream() {
     } catch (error) {
       if ((error as Error).name === "AbortError") return
       const message = error instanceof Error ? error.message : "分析失败"
-      track(AnalyticsEvent.analysisFailed, {
-        has_resume: hasResume,
-        message: message.slice(0, 120),
-      })
       // 配置类错误不要用示例数据掩盖
       if (/OPENAI_API_KEY|未配置有效|AI_CONFIG_ERROR|Incorrect API key|Unauthorized/i.test(message)) {
+        track(AnalyticsEvent.analysisFailed, {
+          has_resume: hasResume,
+          message: message.slice(0, 120),
+        })
         setState({
           ...initialAgentStreamState,
           status: "error",
@@ -294,6 +302,16 @@ export function useAgentStream() {
           streamInterrupted: false,
         })
         return
+      }
+      // 可恢复错误：用户仍能看到结果，记为完成（source=fallback）
+      if (!completedTracked) {
+        track(AnalyticsEvent.analysisCompleted, {
+          has_resume: hasResume,
+          duration_ms: Date.now() - startedAt,
+          overall_score: null,
+          industry: null,
+          source: "fallback",
+        })
       }
       setState((prev) => ({
         ...prev,

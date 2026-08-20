@@ -153,6 +153,9 @@ export function useInterviewStream() {
           const message = err.error ?? `HTTP ${response.status}`
           // 题库未就绪等业务错误：不灌入示例面试，直接失败
           if (response.status === 503) {
+            track(AnalyticsEvent.interviewFailed, {
+              message: message.slice(0, 120),
+            })
             setState((prev) => ({
               ...prev,
               status: "error",
@@ -190,12 +193,11 @@ export function useInterviewStream() {
               receivedDone = true
               track(AnalyticsEvent.interviewCompleted, {
                 duration_ms: Date.now() - startedAt,
-              })
-            } else if (event.type === "error") {
-              track(AnalyticsEvent.interviewFailed, {
-                message: event.message.slice(0, 120),
+                question_count: event.data.questions?.length ?? 0,
+                source: event.source ?? event.data.source ?? "model",
               })
             }
+            // stream error 可能随后走 fallback，失败埋点只在硬失败路径上报
 
             setState((prev) => {
               switch (event.type) {
@@ -246,10 +248,16 @@ export function useInterviewStream() {
         }
 
         if (!receivedDone && !controller.signal.aborted) {
+          const fallback = getFallbackInterview()
+          track(AnalyticsEvent.interviewCompleted, {
+            duration_ms: Date.now() - startedAt,
+            question_count: fallback.questions.length,
+            source: "fallback",
+          })
           setState((prev) => ({
             ...prev,
             status: "done",
-            interview: prev.interview ?? getFallbackInterview(),
+            interview: prev.interview ?? fallback,
             usedFallback: true,
             streamInterrupted: true,
             source: "fallback",
@@ -258,13 +266,35 @@ export function useInterviewStream() {
         }
       } catch (error) {
         if ((error as Error).name === "AbortError") return
-        track(AnalyticsEvent.interviewFailed, {
-          message: error instanceof Error ? error.message.slice(0, 120) : "unknown",
+        // 503 题库未就绪已在上方直接失败；其余可恢复错误走 fallback 完成
+        if (
+          error instanceof Error
+          && /OPENAI_API_KEY|未配置有效|AI_CONFIG_ERROR|Incorrect API key|Unauthorized/i.test(
+            error.message,
+          )
+        ) {
+          track(AnalyticsEvent.interviewFailed, {
+            message: error.message.slice(0, 120),
+          })
+          setState((prev) => ({
+            ...prev,
+            status: "error",
+            error: error.message,
+            streamInterrupted: false,
+            usedFallback: false,
+          }))
+          return
+        }
+        const fallback = getFallbackInterview()
+        track(AnalyticsEvent.interviewCompleted, {
+          duration_ms: Date.now() - startedAt,
+          question_count: fallback.questions.length,
+          source: "fallback",
         })
         setState((prev) => ({
           ...prev,
           status: "done",
-          interview: prev.interview ?? getFallbackInterview(),
+          interview: prev.interview ?? fallback,
           streamInterrupted: true,
           usedFallback: true,
           source: "fallback",
