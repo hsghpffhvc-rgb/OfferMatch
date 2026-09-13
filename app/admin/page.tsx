@@ -13,6 +13,12 @@ import { FEEDBACK_TYPE_META, STEP_LABELS, type BugStep } from "@/types/feedback"
 
 export const dynamic = "force-dynamic"
 
+interface AdminData {
+  analysisRows: AnalysisSessionRow[]
+  feedbackRows: FeedbackRow[]
+  error: string | null
+}
+
 function formatDate(value: string): string {
   return new Intl.DateTimeFormat("zh-CN", {
     month: "2-digit",
@@ -193,6 +199,24 @@ function FeedbackList({ rows }: { rows: FeedbackRow[] }) {
   )
 }
 
+async function loadAdminData(): Promise<AdminData> {
+  try {
+    const [analysisRows, feedbackRows] = await Promise.all([
+      listRecentAnalysisSessions(100),
+      listRecentFeedback(100),
+    ])
+    return { analysisRows, feedbackRows, error: null }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "后台数据读取失败"
+    console.error("[admin] failed to load Supabase data", error)
+    return {
+      analysisRows: [],
+      feedbackRows: [],
+      error: message,
+    }
+  }
+}
+
 export default async function AdminPage({
   searchParams,
 }: {
@@ -202,10 +226,7 @@ export default async function AdminPage({
   const authed = await isAdminAuthenticated()
   if (!authed) return <LoginView hasError={params.error === "1"} />
 
-  const [analysisRows, feedbackRows] = await Promise.all([
-    listRecentAnalysisSessions(100),
-    listRecentFeedback(100),
-  ])
+  const { analysisRows, feedbackRows, error } = await loadAdminData()
   const todayAnalysis = analysisRows.filter((row) => isToday(row.created_at)).length
   const contactFeedback = feedbackRows.filter((row) => row.contact).length
   const uniqueVisitors = new Set(analysisRows.map((row) => row.anonymous_id).filter(Boolean)).size
@@ -235,6 +256,18 @@ export default async function AdminPage({
           <div className="mt-6 rounded-lg border border-destructive/30 bg-card p-4 text-sm text-destructive">
             Supabase 尚未配置。请先在 Supabase SQL Editor 执行 supabase/schema.sql，并设置
             NEXT_PUBLIC_SUPABASE_URL、SUPABASE_SERVICE_ROLE_KEY、ADMIN_PASSWORD。
+          </div>
+        )}
+
+        {error && (
+          <div className="mt-6 rounded-lg border border-destructive/30 bg-card p-4 text-sm text-destructive">
+            <p className="font-medium">后台数据读取失败</p>
+            <p className="mt-2 break-words text-destructive/90">{error}</p>
+            <p className="mt-3 text-destructive/90">
+              请确认 Vercel 环境变量里的 NEXT_PUBLIC_SUPABASE_URL 是项目根地址
+              https://xxx.supabase.co，SUPABASE_SERVICE_ROLE_KEY 是 secret/service_role
+              key，并且已经在 Supabase SQL Editor 执行 supabase/schema.sql。
+            </p>
           </div>
         )}
 

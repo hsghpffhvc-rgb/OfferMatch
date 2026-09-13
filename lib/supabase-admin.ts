@@ -3,7 +3,12 @@ import "server-only"
 import type { PersonaResult, RewriteResult, ResultSource } from "@/lib/agent/types"
 import type { FeedbackPayload } from "@/types/feedback"
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, "")
+function normalizeSupabaseUrl(value: string | undefined): string | undefined {
+  if (!value) return undefined
+  return value.replace(/\/rest\/v1\/?$/, "").replace(/\/$/, "")
+}
+
+const SUPABASE_URL = normalizeSupabaseUrl(process.env.NEXT_PUBLIC_SUPABASE_URL)
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
 
 export interface AnalysisSessionInsert {
