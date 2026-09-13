@@ -53,6 +53,10 @@ npm run dev
 | `TESSERACT_LANG` | 否 | OCR 语言包，默认 `chi_sim+eng`（简中+英文） |
 | `NEXT_PUBLIC_POSTHOG_KEY` | 否 | PostHog Project API Key；不填则关闭访问埋点 |
 | `NEXT_PUBLIC_POSTHOG_HOST` | 否 | PostHog 地址，默认 `https://us.i.posthog.com` |
+| `NEXT_PUBLIC_SUPABASE_URL` | 否 | Supabase 项目 URL；配置后启用业务数据入库 |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | 否 | Supabase publishable key；预留给后续前端 SDK |
+| `SUPABASE_SERVICE_ROLE_KEY` | 否 | Supabase 服务端密钥，仅放服务端环境变量 |
+| `ADMIN_PASSWORD` | 否 | `/admin` 用户数据后台访问密码 |
 
 ### PostHog 匿名访问数据
 
@@ -63,6 +67,31 @@ npm run dev
 3. 重启 `npm run dev` 后，在 PostHog → Activity / Persons 查看匿名访客
 
 已埋点事件：`analysis_*`、`interview_*`、`resume_uploaded`、`jd_uploaded`、`pdf_exported`、`templates_viewed`。**不会**上报完整 JD / 简历正文。
+
+### Supabase 用户数据后台
+
+为了快速完成前 100 个用户的产品闭环，项目内置了一个轻量后台：
+
+- `POST /api/analysis-sessions`：保存一次分析结果的关键业务数据
+- `POST /api/feedback`：优先保存到 Supabase；未配置时回退到本地 `data/feedback.jsonl`
+- `/admin`：查看最近分析、今日分析、独立访客和可回访反馈
+
+配置步骤：
+
+1. 在 Supabase 新建项目
+2. 打开 SQL Editor，执行 [supabase/schema.sql](supabase/schema.sql)
+3. 在部署平台配置：
+
+```bash
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-publishable-key
+SUPABASE_SERVICE_ROLE_KEY=your-secret-or-service-role-key
+ADMIN_PASSWORD=your-admin-password
+```
+
+4. 重新部署后访问 `/admin`
+
+MVP 阶段所有后台读写都通过 Next.js 服务端的 `service_role` key 完成，浏览器端不会直接读取 Supabase 业务表。分析记录默认保存岗位、分数、JD 摘要和 AI 结果；原始 JD / 简历全文仍保留在用户本机历史中。
 
 ### 通义千问（百炼）配置示例
 

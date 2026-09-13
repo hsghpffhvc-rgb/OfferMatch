@@ -22,6 +22,7 @@ import {
   getFallbackRewrite,
 } from "@/lib/agent/fallback-content"
 import { AnalyticsEvent, track } from "@/lib/analytics"
+import { saveCloudAnalysisSession } from "@/lib/cloud-history"
 import { saveHistoryRecord } from "@/lib/history-storage"
 
 export type AnalysisStatus = "idle" | "streaming" | "done" | "error"
@@ -161,7 +162,12 @@ export function useAgentStream() {
 
     const hasResume = Boolean(resume.trim())
     const startedAt = Date.now()
+    const sessionId =
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `s-${startedAt}-${Math.random().toString(36).slice(2, 9)}`
     track(AnalyticsEvent.analysisStarted, {
+      session_id: sessionId,
       has_resume: hasResume,
       jd_chars: jd.length,
       resume_chars: resume.trim().length,
@@ -193,6 +199,7 @@ export function useAgentStream() {
         // 配置缺失：直接报错，不要灌示例简历掩盖问题
         if (response.status === 503 || err.code === "AI_CONFIG_ERROR") {
           track(AnalyticsEvent.analysisFailed, {
+            session_id: sessionId,
             has_resume: hasResume,
             message: message.slice(0, 120),
           })
@@ -233,6 +240,7 @@ export function useAgentStream() {
             completedTracked = true
             const overall = event.data.rewrite?.scores?.overallAfter
             track(AnalyticsEvent.analysisCompleted, {
+              session_id: sessionId,
               has_resume: hasResume,
               duration_ms: Date.now() - startedAt,
               overall_score: typeof overall === "number" ? overall : null,
@@ -250,6 +258,14 @@ export function useAgentStream() {
             } catch {
               // 历史写入失败不影响主流程
             }
+            void saveCloudAnalysisSession({
+              sessionId,
+              persona: event.data.persona,
+              rewrite: event.data.rewrite,
+              jd,
+              resume,
+              source: event.source ?? event.data.source ?? "model",
+            })
           }
           // stream error 可能随后走 fallback，失败埋点只在硬失败路径上报
           setState((prev) => applyEvent(prev, event))
@@ -261,6 +277,7 @@ export function useAgentStream() {
         if (!completedTracked) {
           completedTracked = true
           track(AnalyticsEvent.analysisCompleted, {
+            session_id: sessionId,
             has_resume: hasResume,
             duration_ms: Date.now() - startedAt,
             overall_score: null,
@@ -291,6 +308,7 @@ export function useAgentStream() {
       // 配置类错误不要用示例数据掩盖
       if (/OPENAI_API_KEY|未配置有效|AI_CONFIG_ERROR|Incorrect API key|Unauthorized/i.test(message)) {
         track(AnalyticsEvent.analysisFailed, {
+          session_id: sessionId,
           has_resume: hasResume,
           message: message.slice(0, 120),
         })
@@ -306,6 +324,7 @@ export function useAgentStream() {
       // 可恢复错误：用户仍能看到结果，记为完成（source=fallback）
       if (!completedTracked) {
         track(AnalyticsEvent.analysisCompleted, {
+          session_id: sessionId,
           has_resume: hasResume,
           duration_ms: Date.now() - startedAt,
           overall_score: null,
