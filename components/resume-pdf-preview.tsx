@@ -65,6 +65,7 @@ async function renderPdfViaApi(
 }
 
 interface ResumePdfPreviewProps {
+  analysisId?: string
   resumeData: ResumeData
   defaultTemplate?: string
 }
@@ -104,6 +105,7 @@ function readFileAsDataUrl(file: File): Promise<string> {
 }
 
 export function ResumePdfPreview({
+  analysisId,
   resumeData,
   defaultTemplate = "minimal",
 }: ResumePdfPreviewProps) {
@@ -149,6 +151,7 @@ export function ResumePdfPreview({
   const resumeHash = useMemo(() => hashResumeData(payload), [payload])
 
   const generatePdf = useCallback(async () => {
+    const startedAt = Date.now()
     setLoading(true)
     setError(null)
 
@@ -173,6 +176,8 @@ export function ResumePdfPreview({
         return url
       })
       track(AnalyticsEvent.pdfExported, {
+        analysis_id: analysisId,
+        duration_ms: Date.now() - startedAt,
         template: templateId,
         bytes: blob.size,
         action: "generated",
@@ -202,7 +207,7 @@ export function ResumePdfPreview({
       window.clearTimeout(timeoutId)
       setLoading(false)
     }
-  }, [payload, templateId])
+  }, [payload, templateId, analysisId])
 
   useEffect(() => {
     void generatePdf()
@@ -221,6 +226,7 @@ export function ResumePdfPreview({
     anchor.download = fileName
     anchor.click()
     track(AnalyticsEvent.pdfExported, {
+      analysis_id: analysisId,
       template: templateId,
       action: "downloaded",
     })

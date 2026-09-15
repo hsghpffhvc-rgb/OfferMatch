@@ -11,6 +11,7 @@ export const AnalyticsEvent = {
   jdUploaded: "jd_uploaded",
   pdfExported: "pdf_exported",
   pdfExportFailed: "pdf_export_failed",
+  resumeCopied: "resume_copied",
   interviewStarted: "interview_started",
   interviewCompleted: "interview_completed",
   interviewFailed: "interview_failed",

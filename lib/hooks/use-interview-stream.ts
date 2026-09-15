@@ -117,13 +117,14 @@ export function useInterviewStream() {
   )
 
   const startInterview = useCallback(
-    async (jd: string, context: InterviewContext) => {
+    async (jd: string, context: InterviewContext, analysisId?: string) => {
       abortRef.current?.abort()
       const controller = new AbortController()
       abortRef.current = controller
 
       const startedAt = Date.now()
       track(AnalyticsEvent.interviewStarted, {
+        analysis_id: analysisId,
         experience_count: context.experiences.length,
         skill_count: context.skills.length,
       })
@@ -192,6 +193,7 @@ export function useInterviewStream() {
             if (event.type === "interview_done") {
               receivedDone = true
               track(AnalyticsEvent.interviewCompleted, {
+                analysis_id: analysisId,
                 duration_ms: Date.now() - startedAt,
                 question_count: event.data.questions?.length ?? 0,
                 source: event.source ?? event.data.source ?? "model",

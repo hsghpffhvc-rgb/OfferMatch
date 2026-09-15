@@ -250,6 +250,7 @@ export function AnalysisWorkspace() {
                     {resumePdf}
                     {isAnalysisDone && sessionReady ? (
                       <InterviewPanel
+                        analysisId={state.analysisId}
                         jd={lastJd}
                         persona={state.persona}
                         rewrite={state.rewrite}

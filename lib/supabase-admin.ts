@@ -112,12 +112,14 @@ export async function saveFeedback(input: FeedbackInsert): Promise<FeedbackRow |
   return rows[0] ?? null
 }
 
-export async function listRecentAnalysisSessions(limit = 100): Promise<AnalysisSessionRow[]> {
+export async function listRecentAnalysisSessions(limit = 100, offset = 0): Promise<AnalysisSessionRow[]> {
   if (!isSupabaseConfigured()) return []
   const query = new URLSearchParams({
     select:
       "id,created_at,session_id,anonymous_id,posthog_distinct_id,title,industry,score_before,score_after,label,has_resume,jd_chars,resume_chars,jd_preview,source,page_url,user_agent",
-    order: "created_at.desc",
+    order: "created_at.desc,id.desc",
+    offset: String(offset),
+    source: "eq.model",
     limit: String(limit),
   })
   return supabaseRequest<AnalysisSessionRow[]>("analysis_sessions", { query })

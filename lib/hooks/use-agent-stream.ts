@@ -28,6 +28,7 @@ import { saveHistoryRecord } from "@/lib/history-storage"
 export type AnalysisStatus = "idle" | "streaming" | "done" | "error"
 
 export interface AgentStreamState {
+  analysisId?: string
   status: AnalysisStatus
   currentPhase: AgentPhase | null
   /** 当前阶段服务端状态文案（不展示模型原始 JSON） */
@@ -167,6 +168,7 @@ export function useAgentStream() {
         ? crypto.randomUUID()
         : `s-${startedAt}-${Math.random().toString(36).slice(2, 9)}`
     track(AnalyticsEvent.analysisStarted, {
+      analysis_id: sessionId,
       session_id: sessionId,
       has_resume: hasResume,
       jd_chars: jd.length,
@@ -175,15 +177,17 @@ export function useAgentStream() {
 
     // 新分析开始：清掉旧面试结果，避免串场
     clearInterviewInWorkspace()
-    setState({ ...initialAgentStreamState, status: "streaming" })
+    setState({ ...initialAgentStreamState, analysisId: sessionId, status: "streaming" })
     patchWorkspace({
-      agent: { ...initialAgentStreamState, status: "streaming" },
+      agent: { ...initialAgentStreamState, analysisId: sessionId, status: "streaming" },
       inputs: { lastJd: jd, jd, resume },
       resumePhase: "A",
     })
 
     let receivedDone = false
     let completedTracked = false
+    let firstResponseMs: number | undefined
+    const phaseStarts: Record<string, number> = {}
 
     try {
       const response = await fetch("/api/chat", {
@@ -199,6 +203,7 @@ export function useAgentStream() {
         // 配置缺失：直接报错，不要灌示例简历掩盖问题
         if (response.status === 503 || err.code === "AI_CONFIG_ERROR") {
           track(AnalyticsEvent.analysisFailed, {
+            analysis_id: sessionId,
             session_id: sessionId,
             has_resume: hasResume,
             message: message.slice(0, 120),
@@ -235,11 +240,21 @@ export function useAgentStream() {
           const json = trimmed.slice(5).trim()
           if (!json) continue
           const event = JSON.parse(json) as StreamEvent
+          if (firstResponseMs === undefined) {
+            firstResponseMs = Date.now() - startedAt
+            track("analysis_first_response", { analysis_id: sessionId, duration_ms: firstResponseMs })
+          }
+          if (event.type === "phase" && event.status === "start") phaseStarts[event.phase] = Date.now()
+          if (event.type === "result" && phaseStarts[event.phase] !== undefined) {
+            track("analysis_phase_completed", { analysis_id: sessionId, phase: event.phase, duration_ms: Date.now() - phaseStarts[event.phase] })
+            delete phaseStarts[event.phase]
+          }
           if (event.type === "done") {
             receivedDone = true
             completedTracked = true
             const overall = event.data.rewrite?.scores?.overallAfter
             track(AnalyticsEvent.analysisCompleted, {
+              analysis_id: sessionId,
               session_id: sessionId,
               has_resume: hasResume,
               duration_ms: Date.now() - startedAt,
@@ -268,7 +283,7 @@ export function useAgentStream() {
             })
           }
           // stream error 可能随后走 fallback，失败埋点只在硬失败路径上报
-          setState((prev) => applyEvent(prev, event))
+          setState((prev) => ({ ...applyEvent(prev, event), analysisId: sessionId }))
         }
       }
 
@@ -277,6 +292,7 @@ export function useAgentStream() {
         if (!completedTracked) {
           completedTracked = true
           track(AnalyticsEvent.analysisCompleted, {
+            analysis_id: sessionId,
             session_id: sessionId,
             has_resume: hasResume,
             duration_ms: Date.now() - startedAt,
@@ -287,10 +303,11 @@ export function useAgentStream() {
         }
         setState((prev) => {
           if (prev.status === "done" && prev.rewrite) {
-            return { ...prev, usedFallback: prev.usedFallback, streamInterrupted: true }
+            return { ...prev, analysisId: sessionId, usedFallback: prev.usedFallback, streamInterrupted: true }
           }
           return {
             ...prev,
+            analysisId: sessionId,
             status: "done",
             persona: prev.persona ?? getFallbackPersona(),
             outline: prev.outline ?? getFallbackOutline(),
@@ -308,6 +325,7 @@ export function useAgentStream() {
       // 配置类错误不要用示例数据掩盖
       if (/OPENAI_API_KEY|未配置有效|AI_CONFIG_ERROR|Incorrect API key|Unauthorized/i.test(message)) {
         track(AnalyticsEvent.analysisFailed, {
+          analysis_id: sessionId,
           session_id: sessionId,
           has_resume: hasResume,
           message: message.slice(0, 120),
@@ -324,6 +342,7 @@ export function useAgentStream() {
       // 可恢复错误：用户仍能看到结果，记为完成（source=fallback）
       if (!completedTracked) {
         track(AnalyticsEvent.analysisCompleted, {
+          analysis_id: sessionId,
           session_id: sessionId,
           has_resume: hasResume,
           duration_ms: Date.now() - startedAt,
@@ -341,6 +360,7 @@ export function useAgentStream() {
         streamInterrupted: true,
         usedFallback: true,
         source: "fallback",
+        analysisId: sessionId,
         error: null,
       }))
     }

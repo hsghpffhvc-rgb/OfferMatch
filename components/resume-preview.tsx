@@ -7,8 +7,10 @@ import { ResumePdfPreview } from "@/components/resume-pdf-preview"
 import { mapRewriteResultToResumeData } from "@/lib/pdf/mapper"
 import type { RewriteResult } from "@/lib/agent/types"
 import { cn } from "@/lib/utils"
+import { AnalyticsEvent, track } from "@/lib/analytics"
 
 interface ResumePreviewProps {
+  analysisId?: string
   markdown: string
   isLoading?: boolean
   rewriteResult?: RewriteResult | null
@@ -16,12 +18,14 @@ interface ResumePreviewProps {
 }
 
 export function ResumePreview({
+  analysisId,
   markdown,
   isLoading,
   rewriteResult,
   resumePhoto,
 }: ResumePreviewProps) {
   const parts = useResumePreviewParts({
+    analysisId,
     markdown,
     isLoading,
     rewriteResult,
@@ -39,12 +43,14 @@ export function ResumePreview({
 }
 
 export function useResumePreviewParts({
+  analysisId,
   markdown,
   isLoading,
   rewriteResult,
   resumePhoto,
 }: ResumePreviewProps) {
   const [copied, setCopied] = useState(false)
+  const [copyError, setCopyError] = useState(false)
   const [pdfOpen, setPdfOpen] = useState(false)
 
   const pdfMapping = useMemo(() => {
@@ -69,9 +75,16 @@ export function useResumePreviewParts({
 
   const handleCopy = async () => {
     if (!markdown) return
-    await navigator.clipboard.writeText(markdown)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    setCopyError(false)
+    try {
+      await navigator.clipboard.writeText(markdown)
+      track(AnalyticsEvent.resumeCopied, { source: "resume_preview", analysis_id: analysisId })
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      setCopied(false)
+      setCopyError(true)
+    }
   }
 
   const markdownCard = showMarkdown ? (
@@ -99,6 +112,7 @@ export function useResumePreviewParts({
             )}
           </Button>
         </div>
+        {copyError && <p role="status" className="mb-3 text-sm text-destructive">复制失败，请重试。</p>}
         <div className="max-h-96 overflow-y-auto rounded-2xl border border-border/50 bg-background p-4">
           {isLoading && !markdown ? (
             <p className="text-sm text-muted-foreground">
@@ -137,6 +151,7 @@ export function useResumePreviewParts({
       {pdfOpen ? (
         <div className="border-t border-border/50 px-2 pb-2 sm:px-3 sm:pb-3">
           <ResumePdfPreview
+            analysisId={analysisId}
             resumeData={mappedData}
             defaultTemplate="minimal"
           />

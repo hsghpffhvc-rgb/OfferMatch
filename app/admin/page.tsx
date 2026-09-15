@@ -1,4 +1,7 @@
-import { Lock, LogOut, MessageSquare, Sparkles, Users } from "lucide-react"
+import { Lock, LogOut, MessageSquare, Sparkles } from "lucide-react"
+import { AdminOverview, AnalysisDetails } from "@/components/admin-reports"
+import { overviewQuery, detailQuery } from "@/lib/admin-analytics"
+import { loadReport, type Report } from "@/lib/posthog-reports"
 import type { ReactNode } from "react"
 
 import { isAdminAuthenticated } from "@/lib/admin-auth"
@@ -25,17 +28,8 @@ function formatDate(value: string): string {
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
+    timeZone: "Asia/Shanghai",
   }).format(new Date(value))
-}
-
-function isToday(value: string): boolean {
-  const date = new Date(value)
-  const now = new Date()
-  return (
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate()
-  )
 }
 
 function StatCard({
@@ -96,58 +90,6 @@ function LoginView({ hasError }: { hasError: boolean }) {
   )
 }
 
-function AnalysisTable({ rows }: { rows: AnalysisSessionRow[] }) {
-  if (!rows.length) {
-    return (
-      <p className="rounded-lg border border-border bg-card p-5 text-sm text-muted-foreground">
-        暂无分析记录。
-      </p>
-    )
-  }
-
-  return (
-    <div className="overflow-hidden rounded-lg border border-border bg-card shadow-soft">
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[760px] text-left text-sm">
-          <thead className="border-b border-border bg-secondary/70 text-muted-foreground">
-            <tr>
-              <th className="px-4 py-3 font-medium">时间</th>
-              <th className="px-4 py-3 font-medium">岗位</th>
-              <th className="px-4 py-3 font-medium">行业</th>
-              <th className="px-4 py-3 font-medium">分数</th>
-              <th className="px-4 py-3 font-medium">简历</th>
-              <th className="px-4 py-3 font-medium">JD 摘要</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr className="border-b border-border/70 last:border-0" key={row.id}>
-                <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">
-                  {formatDate(row.created_at)}
-                </td>
-                <td className="max-w-[180px] px-4 py-3 font-medium">
-                  <span className="line-clamp-2">{row.title || "未命名岗位"}</span>
-                </td>
-                <td className="whitespace-nowrap px-4 py-3">{row.industry || "-"}</td>
-                <td className="whitespace-nowrap px-4 py-3">
-                  {row.score_before} →{" "}
-                  <span className="font-semibold text-primary">{row.score_after}</span>
-                </td>
-                <td className="whitespace-nowrap px-4 py-3">
-                  {row.has_resume ? "已上传" : "未上传"}
-                </td>
-                <td className="max-w-[280px] px-4 py-3 text-muted-foreground">
-                  <span className="line-clamp-2">{row.jd_preview || "-"}</span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  )
-}
-
 function FeedbackList({ rows }: { rows: FeedbackRow[] }) {
   if (!rows.length) {
     return (
@@ -199,10 +141,10 @@ function FeedbackList({ rows }: { rows: FeedbackRow[] }) {
   )
 }
 
-async function loadAdminData(): Promise<AdminData> {
+async function loadAdminData(page: number): Promise<AdminData> {
   try {
     const [analysisRows, feedbackRows] = await Promise.all([
-      listRecentAnalysisSessions(100),
+      listRecentAnalysisSessions(26, (page - 1) * 25),
       listRecentFeedback(100),
     ])
     return { analysisRows, feedbackRows, error: null }
@@ -220,25 +162,29 @@ async function loadAdminData(): Promise<AdminData> {
 export default async function AdminPage({
   searchParams,
 }: {
-  searchParams?: Promise<{ error?: string }>
+  searchParams?: Promise<{ error?: string; days?: string; page?: string }>
 }) {
   const params = searchParams ? await searchParams : {}
   const authed = await isAdminAuthenticated()
   if (!authed) return <LoginView hasError={params.error === "1"} />
 
-  const { analysisRows, feedbackRows, error } = await loadAdminData()
-  const todayAnalysis = analysisRows.filter((row) => isToday(row.created_at)).length
+  const days = ["7", "14", "30"].includes(params.days ?? "") ? Number(params.days) : 7
+  const requestedPage = Number(params.page)
+  const page = Number.isSafeInteger(requestedPage) && requestedPage > 0 && requestedPage <= 1000000 ? requestedPage : 1
+  const [{ analysisRows, feedbackRows, error }, overview] = await Promise.all([loadAdminData(page), loadReport(overviewQuery(days))])
+  const records = analysisRows.slice(0, 25)
+  const ids = records.map(row => row.session_id).filter(id => /^[a-zA-Z0-9-]{1,100}$/.test(id))
+  const details: Report = ids.length ? await loadReport(detailQuery(ids)) : { status: "ready", rows: [], updatedAt: new Date().toISOString() }
   const contactFeedback = feedbackRows.filter((row) => row.contact).length
-  const uniqueVisitors = new Set(analysisRows.map((row) => row.anonymous_id).filter(Boolean)).size
 
   return (
-    <main className="min-h-screen bg-mesh px-4 py-6 sm:px-6 lg:px-8">
+    <main className="min-h-screen bg-background px-4 py-6 sm:px-6 lg:px-8">
       <div className="mx-auto max-w-7xl">
         <header className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-semibold sm:text-3xl">OfferMatch 用户数据</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              用来跟进前 100 个用户：看分析记录、反馈和可回访线索。
+              转化概览与用户反馈
             </p>
           </div>
           <form action="/api/admin/logout" method="post">
@@ -271,20 +217,14 @@ export default async function AdminPage({
           </div>
         )}
 
-        <section className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <StatCard icon={<Sparkles className="size-4" />} label="最近分析" value={analysisRows.length} />
-          <StatCard icon={<Sparkles className="size-4" />} label="今日分析" value={todayAnalysis} />
-          <StatCard icon={<Users className="size-4" />} label="独立访客" value={uniqueVisitors} />
-          <StatCard icon={<MessageSquare className="size-4" />} label="可回访反馈" value={contactFeedback} />
+        <AdminOverview report={overview} days={days} />
+
+        <section className="mt-6 grid gap-4 sm:grid-cols-2">
+          <StatCard icon={<Sparkles className="size-4" />} label="本页成功分析记录" value={error || !isSupabaseConfigured() ? "--" : records.length} />
+          <StatCard icon={<MessageSquare className="size-4" />} label="最近 100 条反馈中可回访数" value={error || !isSupabaseConfigured() ? "--" : contactFeedback} />
         </section>
 
-        <section className="mt-8">
-          <h2 className="text-lg font-semibold">最近分析</h2>
-          <p className="mb-3 mt-1 text-sm text-muted-foreground">
-            先看分数、岗位和是否上传简历，判断真实使用质量。
-          </p>
-          <AnalysisTable rows={analysisRows} />
-        </section>
+        <AnalysisDetails records={records} report={details} page={page} days={days} hasNext={analysisRows.length > 25} />
 
         <section className="mt-8 pb-12">
           <h2 className="text-lg font-semibold">最近反馈</h2>

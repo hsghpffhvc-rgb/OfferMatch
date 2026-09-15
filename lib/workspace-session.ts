@@ -21,6 +21,7 @@ export interface WorkspaceInputs {
 
 /** 与 AgentStreamState 结构对齐，避免与 hooks 循环依赖 */
 export interface PersistedAgentState {
+  analysisId?: string
   status: "idle" | "streaming" | "done" | "error"
   currentPhase: AgentPhase | null
   phaseMessage: string | null

@@ -122,6 +122,7 @@ export function HeroInput({
     setUploadError(null)
     setUploadNotice(null)
     setUploading(target)
+    const uploadStartedAt = Date.now()
 
     try {
       const { text, filename, method, pageCount, photo } = await extractFileText(file)
@@ -131,6 +132,7 @@ export function HeroInput({
         setResumeFileName(filename)
         setResumePhoto(photo ?? null)
         track(AnalyticsEvent.resumeUploaded, {
+          duration_ms: Date.now() - uploadStartedAt,
           method: method ?? "text",
           has_photo: Boolean(photo),
           chars: text.length,
@@ -139,6 +141,7 @@ export function HeroInput({
         setJd(text)
         setJdFileName(filename)
         track(AnalyticsEvent.jdUploaded, {
+          duration_ms: Date.now() - uploadStartedAt,
           method: method ?? "text",
           chars: text.length,
         })
@@ -280,6 +283,7 @@ export function HeroInput({
       <div className="w-full max-w-2xl">{composer}</div>
       {phaseProgress}
       <ResumePreview
+        analysisId={state.analysisId}
         markdown={state.rewrite?.rewrittenResumeMarkdown ?? ""}
         rewriteResult={state.rewrite}
         isLoading={isStreaming && state.currentPhase === "C"}

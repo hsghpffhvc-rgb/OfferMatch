@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils"
 import { setInterviewPromptDismissed } from "@/lib/workspace-session"
 
 interface InterviewPanelProps {
+  analysisId?: string
   jd: string
   persona: PersonaResult | null
   rewrite: RewriteResult | null
@@ -24,6 +25,7 @@ export function InterviewPanel({
   persona,
   rewrite,
   isAnalyzing,
+  analysisId,
   onStatusChange,
 }: InterviewPanelProps) {
   const { state, startInterview, reset, submitAnswer } = useInterviewStream()
@@ -65,7 +67,7 @@ export function InterviewPanel({
     setStarting(true)
     setInterviewPromptDismissed(true)
     try {
-      await startInterview(jd, buildInterviewContext(persona, rewrite))
+      await startInterview(jd, buildInterviewContext(persona, rewrite), analysisId)
     } finally {
       setStarting(false)
       startLock.current = false

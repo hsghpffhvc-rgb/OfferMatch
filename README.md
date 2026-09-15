@@ -53,6 +53,17 @@ npm run dev
 | `TESSERACT_LANG` | 否 | OCR 语言包，默认 `chi_sim+eng`（简中+英文） |
 | `NEXT_PUBLIC_POSTHOG_KEY` | 否 | PostHog Project API Key；不填则关闭访问埋点 |
 | `NEXT_PUBLIC_POSTHOG_HOST` | 否 | PostHog 地址，默认 `https://us.i.posthog.com` |
+| `POSTHOG_PERSONAL_API_KEY` | 否 | 后台漏斗查询密钥，仅服务端使用，授予项目所需的查询读取权限 |
+| `POSTHOG_PROJECT_ID` | 否 | 后台漏斗对应的 PostHog 项目 ID |
+| `POSTHOG_API_HOST` | 否 | 查询 API 地址，默认 `https://us.posthog.com`；欧洲区填 `https://eu.posthog.com` |
+
+后台大盘按所选时间范围分别统计各事件的独立用户数，不要求顺序转化。
+上传人数仅包含文件解析成功事件；复制人数只包含剪贴板写入成功；PDF 下载指下载点击，不代表系统已确认文件保存。
+首响应时间为开始分析到首个 SSE 业务事件的时间，完整分析耗时为开始到完成事件的时间，均显示有效样本量。
+分析详情按每页 25 条分页覆盖全部已入库的 `source=model` 记录，排除示例兜底结果，不受大盘日期筛选限制。
+详情通过 `analysis_id` 关联行为（历史开始/完成事件兼容 `session_id`），不按匿名用户猜测关联。
+历史没有采集的行为以及缺失埋点标为未知；PostHog 保留期限、网络和拦截插件也会影响观测，无法追溯补齐。
+新版本部署后才会采集新的分析 ID 与阶段耗时。验证报表逻辑：`node scripts/test-admin-analytics.cjs`。
 | `NEXT_PUBLIC_SUPABASE_URL` | 否 | Supabase 项目 URL；配置后启用业务数据入库 |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | 否 | Supabase publishable key；预留给后续前端 SDK |
 | `SUPABASE_SERVICE_ROLE_KEY` | 否 | Supabase 服务端密钥，仅放服务端环境变量 |
