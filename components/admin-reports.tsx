@@ -3,6 +3,21 @@ import { duration, overviewMetrics } from "@/lib/admin-analytics"
 import type { Report } from "@/lib/posthog-reports"
 import type { AnalysisSessionRow } from "@/lib/supabase-admin"
 
+function eventTime(value: unknown): string {
+  if (typeof value !== "string") return ""
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ""
+  return date.toLocaleString("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  })
+}
+
 export function AdminOverview({ report, days }: { report: Report; days: number }) {
   const rows = report.status === "ready" ? report.rows : null
   return <section className="mt-8 border-y border-border py-6">
@@ -23,7 +38,12 @@ export function AnalysisDetails({ records, report, page, days, hasNext }: { reco
     <div className="mt-4 divide-y divide-border border-y border-border">{records.map(record => {
       const events = report.status === "ready" ? report.rows.filter(row => row[0] === record.session_id) : []
       const find = (event: string, action = "", phase = "") => events.find(row => row[1] === event && row[2] === action && row[3] === phase)
-      const behavior = (event: string, action = "") => find(event, action) ? "已记录" : "未知 / 未观测到"
+      const behavior = (event: string, action = "") => {
+        const row = find(event, action)
+        if (!row) return "未知 / 未观测到"
+        const occurredAt = eventTime(row[6])
+        return occurredAt ? `已记录 · ${occurredAt}` : "已记录"
+      }
       return <details key={record.id} className="py-4">
         <summary className="cursor-pointer break-words text-sm"><span className="font-medium">{record.title || "未命名岗位"}</span><span className="ml-3 text-muted-foreground">{new Date(record.created_at).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })} · {record.score_before} → {record.score_after}</span></summary>
         <div className="mt-4 grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-3">

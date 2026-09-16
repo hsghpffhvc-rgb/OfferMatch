@@ -54,7 +54,7 @@ async function postHogQuery(sql: string, host: string, project: string) {
 
 const query = unstable_cache(async (sql: string, host: string, project: string) => {
   return postHogQuery(sql, host, project)
-}, ["admin-reports-v1"], { revalidate: 300 })
+}, ["admin-reports-v2"], { revalidate: 30 })
 
 export async function loadReport(sql: string): Promise<Report> {
   if (!process.env.POSTHOG_PERSONAL_API_KEY || !process.env.POSTHOG_PROJECT_ID) return { status: "error", message: "PostHog 尚未配置" }

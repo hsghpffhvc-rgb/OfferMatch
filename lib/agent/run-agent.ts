@@ -168,6 +168,39 @@ async function streamPhaseWithRetry(
     : new Error(`阶段 ${phase} 调用失败`)
 }
 
+async function streamJsonPhaseWithRetry<T>(
+  phase: AgentPhase,
+  system: string,
+  user: string,
+  emit: StreamEventEmitter,
+  parse: (text: string) => T,
+  options: StreamPhaseOptions = {},
+  maxAttempts = 3,
+): Promise<T> {
+  let lastError: unknown
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (attempt > 0) {
+      const delay = RETRY_DELAYS_MS[attempt - 1] ?? 3000
+      console.warn(`streamJsonPhase retry phase=${phase} attempt=${attempt + 1} delayMs=${delay}`)
+      await sleep(delay)
+    }
+
+    try {
+      const text = await streamPhase(phase, system, user, emit, options)
+      return parse(text)
+    } catch (error) {
+      lastError = error
+      const reason = error instanceof Error ? error.message : "unknown error"
+      console.warn(`streamJsonPhase failed phase=${phase} attempt=${attempt + 1}: ${reason}`)
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(`阶段 ${phase} 生成或解析失败`)
+}
+
 /** 分析阶段共用：纯 JSON 输出，不把模型原文推到前端生成框 */
 const ANALYSIS_STREAM_OPTIONS: StreamPhaseOptions = {
   publishContent: false,
@@ -179,6 +212,157 @@ function markSource<T extends { source?: ResultSource }>(
   source: ResultSource,
 ): T {
   return { ...data, source }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value)
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string")
+}
+
+function parsePersona(text: string): PersonaResult {
+  const value = extractJsonFromText<unknown>(text)
+  if (
+    !isRecord(value)
+    || typeof value.title !== "string"
+    || typeof value.industry !== "string"
+    || !isStringArray(value.hardSkills)
+    || !isStringArray(value.softSkills)
+    || !isStringArray(value.businessPainPoints)
+    || !isStringArray(value.interviewKeywords)
+    || !isStringArray(value.optimizationAdvice)
+  ) {
+    throw new Error("阶段 A 返回结构不完整")
+  }
+  return value as unknown as PersonaResult
+}
+
+function parseOutline(text: string): OutlineResult {
+  const value = extractJsonFromText<unknown>(text)
+  if (
+    !isRecord(value)
+    || typeof value.summary !== "string"
+    || !Array.isArray(value.sections)
+    || !value.sections.every((section) =>
+      isRecord(section)
+      && typeof section.heading === "string"
+      && isStringArray(section.bullets))
+    || !isStringArray(value.keyHighlights)
+  ) {
+    throw new Error("阶段 B 返回结构不完整")
+  }
+  return value as unknown as OutlineResult
+}
+
+function parseRewrite(
+  text: string,
+  resumeText: string,
+  outline: OutlineResult,
+): RewriteResult {
+  const value = extractJsonFromText<unknown>(text)
+  if (!isRecord(value)) throw new Error("阶段 C 返回结构不完整")
+
+  const fallback = getFallbackRewrite(resumeText, outline)
+  const scoresValue = isRecord(value.scores) ? value.scores : {}
+  const resumeValue = isRecord(value.resume) ? value.resume : {}
+  const basicsValue = isRecord(resumeValue.basics) ? resumeValue.basics : {}
+  const summaryValue = isRecord(resumeValue.summary) ? resumeValue.summary : {}
+
+  const score = (key: keyof typeof fallback.scores) => {
+    const candidate = scoresValue[key]
+    const defaultValue = fallback.scores[key]
+    if (!isRecord(candidate) || !isRecord(defaultValue)) return defaultValue
+    return {
+      ...defaultValue,
+      before: typeof candidate.before === "number" ? candidate.before : defaultValue.before,
+      after: typeof candidate.after === "number" ? candidate.after : defaultValue.after,
+      gaps: isStringArray(candidate.gaps) ? candidate.gaps : defaultValue.gaps,
+      improvements: isStringArray(candidate.improvements)
+        ? candidate.improvements
+        : defaultValue.improvements,
+    }
+  }
+
+  const keywordValue = isRecord(scoresValue.keywordAnalysis)
+    ? scoresValue.keywordAnalysis
+    : {}
+  const keywordFallback = fallback.scores.keywordAnalysis
+  const normalizedSections = Array.isArray(resumeValue.sections)
+    ? resumeValue.sections.filter(isRecord).map((section) => ({
+        ...section,
+        type: typeof section.type === "string" ? section.type : "experience",
+        title: typeof section.title === "string" ? section.title : "简历内容",
+        items: Array.isArray(section.items)
+          ? section.items.filter(isRecord).map((item) => ({
+              ...item,
+              highlights: Array.isArray(item.highlights)
+                ? item.highlights.filter(isRecord)
+                : [],
+            }))
+          : [],
+      }))
+    : fallback.resume.sections
+  const normalizedSkills = Array.isArray(resumeValue.skills)
+    ? resumeValue.skills.filter(isRecord).map((group) => ({
+        ...group,
+        group: typeof group.group === "string" ? group.group : "专业技能",
+        items: Array.isArray(group.items) ? group.items.filter(isRecord) : [],
+      }))
+    : fallback.resume.skills
+  const normalizedModifications = Array.isArray(value.modifications)
+    ? value.modifications.filter(isRecord).map((item) => ({
+        section: typeof item.section === "string" ? item.section : "简历内容",
+        original: typeof item.original === "string" ? item.original : "",
+        rewritten: typeof item.rewritten === "string" ? item.rewritten : "",
+        rationale: typeof item.rationale === "string" ? item.rationale : "",
+        matchedKeywords: isStringArray(item.matchedKeywords) ? item.matchedKeywords : [],
+      }))
+    : fallback.modifications
+
+  const normalized = {
+    source: "model",
+    scores: {
+      keywordCoverage: score("keywordCoverage"),
+      hardSkillMatch: score("hardSkillMatch"),
+      softSkillMatch: score("softSkillMatch"),
+      experienceRelevance: score("experienceRelevance"),
+      quantification: score("quantification"),
+      starCompleteness: score("starCompleteness"),
+      atsFriendliness: score("atsFriendliness"),
+      overallBefore: typeof scoresValue.overallBefore === "number"
+        ? scoresValue.overallBefore
+        : fallback.scores.overallBefore,
+      overallAfter: typeof scoresValue.overallAfter === "number"
+        ? scoresValue.overallAfter
+        : fallback.scores.overallAfter,
+      label: typeof scoresValue.label === "string" ? scoresValue.label : fallback.scores.label,
+      keywordAnalysis: {
+        jdKeywords: isStringArray(keywordValue.jdKeywords) ? keywordValue.jdKeywords : keywordFallback.jdKeywords,
+        matched: isStringArray(keywordValue.matched) ? keywordValue.matched : keywordFallback.matched,
+        missing: isStringArray(keywordValue.missing) ? keywordValue.missing : keywordFallback.missing,
+        newlyCovered: isStringArray(keywordValue.newlyCovered) ? keywordValue.newlyCovered : keywordFallback.newlyCovered,
+        stillMissing: isStringArray(keywordValue.stillMissing) ? keywordValue.stillMissing : keywordFallback.stillMissing,
+      },
+      strengths: isStringArray(scoresValue.strengths) ? scoresValue.strengths : fallback.scores.strengths,
+      weaknesses: isStringArray(scoresValue.weaknesses) ? scoresValue.weaknesses : fallback.scores.weaknesses,
+      actionItems: isStringArray(scoresValue.actionItems) ? scoresValue.actionItems : fallback.scores.actionItems,
+    },
+    resume: {
+      basics: { ...fallback.resume.basics, ...basicsValue },
+      summary: { ...fallback.resume.summary, ...summaryValue },
+      sections: normalizedSections,
+      skills: normalizedSkills,
+    },
+    rewrittenResumeMarkdown:
+      typeof value.rewrittenResumeMarkdown === "string" && value.rewrittenResumeMarkdown.trim()
+        ? value.rewrittenResumeMarkdown
+        : fallback.rewrittenResumeMarkdown,
+    modifications: normalizedModifications,
+  } as RewriteResult
+
+  return sanitizeRewriteResult(normalized)
 }
 
 export async function runAgentPipeline(
@@ -199,14 +383,15 @@ export async function runAgentPipeline(
   // 阶段 A
   let persona: PersonaResult
   try {
-    const phaseAText = await streamPhaseWithRetry(
+    persona = markSource(await streamJsonPhaseWithRetry(
       "A",
       PHASE_A_SYSTEM,
       buildPhaseAUserPrompt(jd),
       emit,
+      parsePersona,
       ANALYSIS_STREAM_OPTIONS,
-    )
-    persona = markSource(extractJsonFromText<PersonaResult>(phaseAText), "model")
+      2,
+    ), "model")
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown error"
     if (isAiConfigError(error)) {
@@ -227,14 +412,15 @@ export async function runAgentPipeline(
       // A 已降级时 B/C 同步使用示例，避免半截真实数据混入示例画像
       throw new Error("upstream fallback")
     }
-    const phaseBText = await streamPhaseWithRetry(
+    outline = markSource(await streamJsonPhaseWithRetry(
       "B",
       PHASE_B_SYSTEM,
       buildPhaseBUserPrompt(jd, JSON.stringify(persona)),
       emit,
+      parseOutline,
       ANALYSIS_STREAM_OPTIONS,
-    )
-    outline = markSource(extractJsonFromText<OutlineResult>(phaseBText), "model")
+      2,
+    ), "model")
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown error"
     if (isAiConfigError(error)) {
@@ -258,17 +444,15 @@ export async function runAgentPipeline(
     if (pipelineSource === "fallback") {
       throw new Error("upstream fallback")
     }
-    const phaseCText = await streamPhaseWithRetry(
+    rewrite = markSource(await streamJsonPhaseWithRetry(
       "C",
       PHASE_C_SYSTEM,
       buildPhaseCUserPrompt(jd, JSON.stringify(outline), resumeInput),
       emit,
+      (text) => parseRewrite(text, resume, outline),
       ANALYSIS_STREAM_OPTIONS,
-    )
-    rewrite = markSource(
-      sanitizeRewriteResult(extractJsonFromText<RewriteResult>(phaseCText)),
-      "model",
-    )
+      1,
+    ), "model")
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown error"
     if (isAiConfigError(error)) {
@@ -276,7 +460,7 @@ export async function runAgentPipeline(
       throw error
     }
     console.warn(`phase_C_fallback: ${reason}`)
-    rewrite = getFallbackRewrite()
+    rewrite = getFallbackRewrite(resume, outline)
     pipelineSource = "fallback"
   }
   emit({ type: "result", phase: "C", data: rewrite, source: rewrite.source ?? "model" })

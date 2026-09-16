@@ -4,7 +4,7 @@ import { assertAiConfigured } from "@/lib/agent/ai-config"
 import type { ChatRequestBody } from "@/lib/agent/types"
 
 export const runtime = "nodejs"
-export const maxDuration = 120
+export const maxDuration = 180
 
 export async function POST(request: Request) {
   try {
