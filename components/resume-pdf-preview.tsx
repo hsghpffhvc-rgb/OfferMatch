@@ -200,6 +200,7 @@ export function ResumePdfPreview({
       }
       setError(message)
       track(AnalyticsEvent.pdfExportFailed, {
+        analysis_id: analysisId,
         template: templateId,
         message: message.slice(0, 120),
       })

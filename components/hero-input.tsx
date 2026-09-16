@@ -255,6 +255,7 @@ export function HeroInput({
   )
 
   const resumeParts = useResumePreviewParts({
+    analysisId: state.analysisId,
     markdown: state.rewrite?.rewrittenResumeMarkdown ?? "",
     rewriteResult: state.rewrite,
     isLoading: isStreaming && state.currentPhase === "C",

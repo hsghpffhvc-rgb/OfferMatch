@@ -168,6 +168,38 @@ async function streamPhaseWithRetry(
     : new Error(`阶段 ${phase} 调用失败`)
 }
 
+async function streamJsonPhaseWithRetry<T>(
+  phase: AgentPhase,
+  system: string,
+  user: string,
+  emit: StreamEventEmitter,
+  parse: (text: string) => T,
+  options: StreamPhaseOptions = {},
+): Promise<T> {
+  let lastError: unknown
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) {
+      const delay = RETRY_DELAYS_MS[attempt - 1] ?? 3000
+      console.warn(`streamJsonPhase retry phase=${phase} attempt=${attempt + 1} delayMs=${delay}`)
+      await sleep(delay)
+    }
+
+    try {
+      const text = await streamPhase(phase, system, user, emit, options)
+      return parse(text)
+    } catch (error) {
+      lastError = error
+      const reason = error instanceof Error ? error.message : "unknown error"
+      console.warn(`streamJsonPhase failed phase=${phase} attempt=${attempt + 1}: ${reason}`)
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(`阶段 ${phase} 生成或解析失败`)
+}
+
 /** 分析阶段共用：纯 JSON 输出，不把模型原文推到前端生成框 */
 const ANALYSIS_STREAM_OPTIONS: StreamPhaseOptions = {
   publishContent: false,
@@ -179,6 +211,105 @@ function markSource<T extends { source?: ResultSource }>(
   source: ResultSource,
 ): T {
   return { ...data, source }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value)
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string")
+}
+
+function parsePersona(text: string): PersonaResult {
+  const value = extractJsonFromText<unknown>(text)
+  if (
+    !isRecord(value)
+    || typeof value.title !== "string"
+    || typeof value.industry !== "string"
+    || !isStringArray(value.hardSkills)
+    || !isStringArray(value.softSkills)
+    || !isStringArray(value.businessPainPoints)
+    || !isStringArray(value.interviewKeywords)
+    || !isStringArray(value.optimizationAdvice)
+  ) {
+    throw new Error("阶段 A 返回结构不完整")
+  }
+  return value as unknown as PersonaResult
+}
+
+function parseOutline(text: string): OutlineResult {
+  const value = extractJsonFromText<unknown>(text)
+  if (
+    !isRecord(value)
+    || typeof value.summary !== "string"
+    || !Array.isArray(value.sections)
+    || !value.sections.every((section) =>
+      isRecord(section)
+      && typeof section.heading === "string"
+      && isStringArray(section.bullets))
+    || !isStringArray(value.keyHighlights)
+  ) {
+    throw new Error("阶段 B 返回结构不完整")
+  }
+  return value as unknown as OutlineResult
+}
+
+function parseRewrite(text: string): RewriteResult {
+  const value = extractJsonFromText<unknown>(text)
+  if (!isRecord(value) || !isRecord(value.scores) || !isRecord(value.resume)) {
+    throw new Error("阶段 C 返回结构不完整")
+  }
+
+  const resumeValue = value.resume
+  const scoresValue = value.scores
+  const sections = resumeValue.sections
+  const skills = resumeValue.skills
+  const dimensions = [
+    "keywordCoverage",
+    "hardSkillMatch",
+    "softSkillMatch",
+    "experienceRelevance",
+    "quantification",
+    "starCompleteness",
+    "atsFriendliness",
+  ]
+  const hasValidScores = dimensions.every((key) => {
+    const dimension = scoresValue[key]
+    return isRecord(dimension)
+      && typeof dimension.before === "number"
+      && typeof dimension.after === "number"
+      && isStringArray(dimension.gaps)
+      && isStringArray(dimension.improvements)
+  })
+  const hasValidSections = Array.isArray(sections)
+    && sections.every((section) =>
+      isRecord(section)
+      && Array.isArray(section.items)
+      && section.items.every((item) =>
+        isRecord(item) && (item.highlights === undefined || Array.isArray(item.highlights))))
+  const hasValidSkills = Array.isArray(skills)
+    && skills.every((group) =>
+      isRecord(group)
+      && Array.isArray(group.items)
+      && group.items.every(isRecord))
+
+  if (
+    !hasValidScores
+    || typeof scoresValue.overallBefore !== "number"
+    || typeof scoresValue.overallAfter !== "number"
+    || !isRecord(resumeValue.basics)
+    || !isRecord(resumeValue.summary)
+    || !hasValidSections
+    || !hasValidSkills
+    || typeof value.rewrittenResumeMarkdown !== "string"
+    || !value.rewrittenResumeMarkdown.trim()
+    || !Array.isArray(value.modifications)
+  ) {
+    throw new Error("阶段 C 返回的简历结构无法继续导出或面试")
+  }
+
+  return sanitizeRewriteResult(value as unknown as RewriteResult)
 }
 
 export async function runAgentPipeline(
@@ -199,14 +330,14 @@ export async function runAgentPipeline(
   // 阶段 A
   let persona: PersonaResult
   try {
-    const phaseAText = await streamPhaseWithRetry(
+    persona = markSource(await streamJsonPhaseWithRetry(
       "A",
       PHASE_A_SYSTEM,
       buildPhaseAUserPrompt(jd),
       emit,
+      parsePersona,
       ANALYSIS_STREAM_OPTIONS,
-    )
-    persona = markSource(extractJsonFromText<PersonaResult>(phaseAText), "model")
+    ), "model")
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown error"
     if (isAiConfigError(error)) {
@@ -227,14 +358,14 @@ export async function runAgentPipeline(
       // A 已降级时 B/C 同步使用示例，避免半截真实数据混入示例画像
       throw new Error("upstream fallback")
     }
-    const phaseBText = await streamPhaseWithRetry(
+    outline = markSource(await streamJsonPhaseWithRetry(
       "B",
       PHASE_B_SYSTEM,
       buildPhaseBUserPrompt(jd, JSON.stringify(persona)),
       emit,
+      parseOutline,
       ANALYSIS_STREAM_OPTIONS,
-    )
-    outline = markSource(extractJsonFromText<OutlineResult>(phaseBText), "model")
+    ), "model")
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown error"
     if (isAiConfigError(error)) {
@@ -258,17 +389,14 @@ export async function runAgentPipeline(
     if (pipelineSource === "fallback") {
       throw new Error("upstream fallback")
     }
-    const phaseCText = await streamPhaseWithRetry(
+    rewrite = markSource(await streamJsonPhaseWithRetry(
       "C",
       PHASE_C_SYSTEM,
       buildPhaseCUserPrompt(jd, JSON.stringify(outline), resumeInput),
       emit,
+      parseRewrite,
       ANALYSIS_STREAM_OPTIONS,
-    )
-    rewrite = markSource(
-      sanitizeRewriteResult(extractJsonFromText<RewriteResult>(phaseCText)),
-      "model",
-    )
+    ), "model")
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown error"
     if (isAiConfigError(error)) {
@@ -276,7 +404,7 @@ export async function runAgentPipeline(
       throw error
     }
     console.warn(`phase_C_fallback: ${reason}`)
-    rewrite = getFallbackRewrite()
+    rewrite = getFallbackRewrite(resume, outline)
     pipelineSource = "fallback"
   }
   emit({ type: "result", phase: "C", data: rewrite, source: rewrite.source ?? "model" })

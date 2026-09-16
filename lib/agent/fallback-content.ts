@@ -285,8 +285,11 @@ export function getFallbackOutline(): OutlineResult {
   return { ...FALLBACK_OUTLINE, source: "fallback" }
 }
 
-export function getFallbackRewrite(): RewriteResult {
-  return {
+export function getFallbackRewrite(
+  resumeText = "",
+  outline?: OutlineResult,
+): RewriteResult {
+  const fallback: RewriteResult = {
     ...FALLBACK_REWRITE,
     source: "fallback",
     scores: {
@@ -298,6 +301,83 @@ export function getFallbackRewrite(): RewriteResult {
       ...item,
       matchedKeywords: [...item.matchedKeywords],
     })),
+  }
+
+  const originalResume = resumeText.trim()
+  if (!originalResume) return fallback
+
+  const targetKeywords = (outline?.keyHighlights ?? []).slice(0, 8)
+  return {
+    ...fallback,
+    scores: {
+      ...fallback.scores,
+      label: "待提升",
+      weaknesses: ["本次重写服务未返回完整结构，当前保留原始简历内容"],
+      actionItems: ["可直接继续导出或面试，也可稍后点击重新生成"],
+      keywordAnalysis: {
+        ...fallback.scores.keywordAnalysis,
+        jdKeywords: targetKeywords,
+        matched: [],
+        missing: targetKeywords,
+        newlyCovered: [],
+        stillMissing: targetKeywords,
+      },
+    },
+    resume: {
+      basics: {
+        name: "",
+        title: outline?.summary ?? "",
+        email: "",
+        phone: "",
+        location: "",
+        linkedin: "",
+        github: "",
+        website: "",
+        photo: "",
+      },
+      summary: {
+        text: originalResume.slice(0, 3000),
+        positioning: outline?.summary ?? "",
+        yearsExperience: 0,
+        keywords: targetKeywords,
+      },
+      sections: [
+        {
+          type: "experience",
+          title: "原始简历内容",
+          items: [
+            {
+              title: "原始简历",
+              summary: originalResume.slice(0, 5000),
+              highlights: [],
+              keywords: targetKeywords,
+              order: 1,
+            },
+          ],
+        },
+      ],
+      skills: targetKeywords.length
+        ? [{
+            group: "目标岗位关键词",
+            items: targetKeywords.map((keyword) => ({
+              name: keyword,
+              category: "目标能力",
+              level: "",
+              evidence: "",
+            })),
+          }]
+        : [],
+    },
+    rewrittenResumeMarkdown: `# 原始简历（重写服务暂时不可用）\n\n${originalResume}`,
+    modifications: [
+      {
+        section: "完整简历",
+        original: originalResume.slice(0, 500),
+        rewritten: "已保留原始内容，未使用无关示例替换",
+        rationale: "模型重写结果暂时不可解析",
+        matchedKeywords: [],
+      },
+    ],
   }
 }
 

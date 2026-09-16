@@ -89,7 +89,7 @@ export function AnalysisWorkspace() {
           status: "done",
           persona: partial.persona ?? getFallbackPersona(),
           outline: partial.outline ?? getFallbackOutline(),
-          rewrite: partial.rewrite ?? getFallbackRewrite(),
+          rewrite: partial.rewrite ?? getFallbackRewrite(getPersistedInputs().resume, partial.outline ?? undefined),
           streamInterrupted: true,
           usedFallback: true,
           source: "fallback",
