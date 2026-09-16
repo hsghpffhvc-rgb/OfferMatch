@@ -224,36 +224,42 @@ function isStringArray(value: unknown): value is string[] {
 
 function parsePersona(text: string): PersonaResult {
   const value = extractJsonFromText<unknown>(text)
-  if (
-    !isRecord(value)
-    || typeof value.title !== "string"
-    || typeof value.industry !== "string"
-    || !isStringArray(value.hardSkills)
-    || !isStringArray(value.softSkills)
-    || !isStringArray(value.businessPainPoints)
-    || !isStringArray(value.interviewKeywords)
-    || !isStringArray(value.optimizationAdvice)
-  ) {
-    throw new Error("阶段 A 返回结构不完整")
+  if (!isRecord(value)) throw new Error("阶段 A 返回结构不完整")
+  const fallback = getFallbackPersona()
+  return {
+    title: typeof value.title === "string" ? value.title : fallback.title,
+    industry: typeof value.industry === "string" ? value.industry : fallback.industry,
+    hardSkills: isStringArray(value.hardSkills) ? value.hardSkills : fallback.hardSkills,
+    softSkills: isStringArray(value.softSkills) ? value.softSkills : fallback.softSkills,
+    businessPainPoints: isStringArray(value.businessPainPoints)
+      ? value.businessPainPoints
+      : fallback.businessPainPoints,
+    interviewKeywords: isStringArray(value.interviewKeywords)
+      ? value.interviewKeywords
+      : fallback.interviewKeywords,
+    optimizationAdvice: isStringArray(value.optimizationAdvice)
+      ? value.optimizationAdvice
+      : fallback.optimizationAdvice,
   }
-  return value as unknown as PersonaResult
 }
 
 function parseOutline(text: string): OutlineResult {
   const value = extractJsonFromText<unknown>(text)
-  if (
-    !isRecord(value)
-    || typeof value.summary !== "string"
-    || !Array.isArray(value.sections)
-    || !value.sections.every((section) =>
-      isRecord(section)
-      && typeof section.heading === "string"
-      && isStringArray(section.bullets))
-    || !isStringArray(value.keyHighlights)
-  ) {
-    throw new Error("阶段 B 返回结构不完整")
+  if (!isRecord(value)) throw new Error("阶段 B 返回结构不完整")
+  const fallback = getFallbackOutline()
+  const sections = Array.isArray(value.sections)
+    ? value.sections.filter(isRecord).map((section) => ({
+        heading: typeof section.heading === "string" ? section.heading : "简历内容",
+        bullets: isStringArray(section.bullets) ? section.bullets : [],
+      }))
+    : fallback.sections
+  return {
+    summary: typeof value.summary === "string" ? value.summary : fallback.summary,
+    sections: sections.length ? sections : fallback.sections,
+    keyHighlights: isStringArray(value.keyHighlights)
+      ? value.keyHighlights
+      : fallback.keyHighlights,
   }
-  return value as unknown as OutlineResult
 }
 
 function parseRewrite(
