@@ -175,10 +175,11 @@ async function streamJsonPhaseWithRetry<T>(
   emit: StreamEventEmitter,
   parse: (text: string) => T,
   options: StreamPhaseOptions = {},
+  maxAttempts = 3,
 ): Promise<T> {
   let lastError: unknown
 
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     if (attempt > 0) {
       const delay = RETRY_DELAYS_MS[attempt - 1] ?? 3000
       console.warn(`streamJsonPhase retry phase=${phase} attempt=${attempt + 1} delayMs=${delay}`)
@@ -255,61 +256,113 @@ function parseOutline(text: string): OutlineResult {
   return value as unknown as OutlineResult
 }
 
-function parseRewrite(text: string): RewriteResult {
+function parseRewrite(
+  text: string,
+  resumeText: string,
+  outline: OutlineResult,
+): RewriteResult {
   const value = extractJsonFromText<unknown>(text)
-  if (!isRecord(value) || !isRecord(value.scores) || !isRecord(value.resume)) {
-    throw new Error("阶段 C 返回结构不完整")
+  if (!isRecord(value)) throw new Error("阶段 C 返回结构不完整")
+
+  const fallback = getFallbackRewrite(resumeText, outline)
+  const scoresValue = isRecord(value.scores) ? value.scores : {}
+  const resumeValue = isRecord(value.resume) ? value.resume : {}
+  const basicsValue = isRecord(resumeValue.basics) ? resumeValue.basics : {}
+  const summaryValue = isRecord(resumeValue.summary) ? resumeValue.summary : {}
+
+  const score = (key: keyof typeof fallback.scores) => {
+    const candidate = scoresValue[key]
+    const defaultValue = fallback.scores[key]
+    if (!isRecord(candidate) || !isRecord(defaultValue)) return defaultValue
+    return {
+      ...defaultValue,
+      before: typeof candidate.before === "number" ? candidate.before : defaultValue.before,
+      after: typeof candidate.after === "number" ? candidate.after : defaultValue.after,
+      gaps: isStringArray(candidate.gaps) ? candidate.gaps : defaultValue.gaps,
+      improvements: isStringArray(candidate.improvements)
+        ? candidate.improvements
+        : defaultValue.improvements,
+    }
   }
 
-  const resumeValue = value.resume
-  const scoresValue = value.scores
-  const sections = resumeValue.sections
-  const skills = resumeValue.skills
-  const dimensions = [
-    "keywordCoverage",
-    "hardSkillMatch",
-    "softSkillMatch",
-    "experienceRelevance",
-    "quantification",
-    "starCompleteness",
-    "atsFriendliness",
-  ]
-  const hasValidScores = dimensions.every((key) => {
-    const dimension = scoresValue[key]
-    return isRecord(dimension)
-      && typeof dimension.before === "number"
-      && typeof dimension.after === "number"
-      && isStringArray(dimension.gaps)
-      && isStringArray(dimension.improvements)
-  })
-  const hasValidSections = Array.isArray(sections)
-    && sections.every((section) =>
-      isRecord(section)
-      && Array.isArray(section.items)
-      && section.items.every((item) =>
-        isRecord(item) && (item.highlights === undefined || Array.isArray(item.highlights))))
-  const hasValidSkills = Array.isArray(skills)
-    && skills.every((group) =>
-      isRecord(group)
-      && Array.isArray(group.items)
-      && group.items.every(isRecord))
+  const keywordValue = isRecord(scoresValue.keywordAnalysis)
+    ? scoresValue.keywordAnalysis
+    : {}
+  const keywordFallback = fallback.scores.keywordAnalysis
+  const normalizedSections = Array.isArray(resumeValue.sections)
+    ? resumeValue.sections.filter(isRecord).map((section) => ({
+        ...section,
+        type: typeof section.type === "string" ? section.type : "experience",
+        title: typeof section.title === "string" ? section.title : "简历内容",
+        items: Array.isArray(section.items)
+          ? section.items.filter(isRecord).map((item) => ({
+              ...item,
+              highlights: Array.isArray(item.highlights)
+                ? item.highlights.filter(isRecord)
+                : [],
+            }))
+          : [],
+      }))
+    : fallback.resume.sections
+  const normalizedSkills = Array.isArray(resumeValue.skills)
+    ? resumeValue.skills.filter(isRecord).map((group) => ({
+        ...group,
+        group: typeof group.group === "string" ? group.group : "专业技能",
+        items: Array.isArray(group.items) ? group.items.filter(isRecord) : [],
+      }))
+    : fallback.resume.skills
+  const normalizedModifications = Array.isArray(value.modifications)
+    ? value.modifications.filter(isRecord).map((item) => ({
+        section: typeof item.section === "string" ? item.section : "简历内容",
+        original: typeof item.original === "string" ? item.original : "",
+        rewritten: typeof item.rewritten === "string" ? item.rewritten : "",
+        rationale: typeof item.rationale === "string" ? item.rationale : "",
+        matchedKeywords: isStringArray(item.matchedKeywords) ? item.matchedKeywords : [],
+      }))
+    : fallback.modifications
 
-  if (
-    !hasValidScores
-    || typeof scoresValue.overallBefore !== "number"
-    || typeof scoresValue.overallAfter !== "number"
-    || !isRecord(resumeValue.basics)
-    || !isRecord(resumeValue.summary)
-    || !hasValidSections
-    || !hasValidSkills
-    || typeof value.rewrittenResumeMarkdown !== "string"
-    || !value.rewrittenResumeMarkdown.trim()
-    || !Array.isArray(value.modifications)
-  ) {
-    throw new Error("阶段 C 返回的简历结构无法继续导出或面试")
-  }
+  const normalized = {
+    source: "model",
+    scores: {
+      keywordCoverage: score("keywordCoverage"),
+      hardSkillMatch: score("hardSkillMatch"),
+      softSkillMatch: score("softSkillMatch"),
+      experienceRelevance: score("experienceRelevance"),
+      quantification: score("quantification"),
+      starCompleteness: score("starCompleteness"),
+      atsFriendliness: score("atsFriendliness"),
+      overallBefore: typeof scoresValue.overallBefore === "number"
+        ? scoresValue.overallBefore
+        : fallback.scores.overallBefore,
+      overallAfter: typeof scoresValue.overallAfter === "number"
+        ? scoresValue.overallAfter
+        : fallback.scores.overallAfter,
+      label: typeof scoresValue.label === "string" ? scoresValue.label : fallback.scores.label,
+      keywordAnalysis: {
+        jdKeywords: isStringArray(keywordValue.jdKeywords) ? keywordValue.jdKeywords : keywordFallback.jdKeywords,
+        matched: isStringArray(keywordValue.matched) ? keywordValue.matched : keywordFallback.matched,
+        missing: isStringArray(keywordValue.missing) ? keywordValue.missing : keywordFallback.missing,
+        newlyCovered: isStringArray(keywordValue.newlyCovered) ? keywordValue.newlyCovered : keywordFallback.newlyCovered,
+        stillMissing: isStringArray(keywordValue.stillMissing) ? keywordValue.stillMissing : keywordFallback.stillMissing,
+      },
+      strengths: isStringArray(scoresValue.strengths) ? scoresValue.strengths : fallback.scores.strengths,
+      weaknesses: isStringArray(scoresValue.weaknesses) ? scoresValue.weaknesses : fallback.scores.weaknesses,
+      actionItems: isStringArray(scoresValue.actionItems) ? scoresValue.actionItems : fallback.scores.actionItems,
+    },
+    resume: {
+      basics: { ...fallback.resume.basics, ...basicsValue },
+      summary: { ...fallback.resume.summary, ...summaryValue },
+      sections: normalizedSections,
+      skills: normalizedSkills,
+    },
+    rewrittenResumeMarkdown:
+      typeof value.rewrittenResumeMarkdown === "string" && value.rewrittenResumeMarkdown.trim()
+        ? value.rewrittenResumeMarkdown
+        : fallback.rewrittenResumeMarkdown,
+    modifications: normalizedModifications,
+  } as RewriteResult
 
-  return sanitizeRewriteResult(value as unknown as RewriteResult)
+  return sanitizeRewriteResult(normalized)
 }
 
 export async function runAgentPipeline(
@@ -337,6 +390,7 @@ export async function runAgentPipeline(
       emit,
       parsePersona,
       ANALYSIS_STREAM_OPTIONS,
+      2,
     ), "model")
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown error"
@@ -365,6 +419,7 @@ export async function runAgentPipeline(
       emit,
       parseOutline,
       ANALYSIS_STREAM_OPTIONS,
+      2,
     ), "model")
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown error"
@@ -394,8 +449,9 @@ export async function runAgentPipeline(
       PHASE_C_SYSTEM,
       buildPhaseCUserPrompt(jd, JSON.stringify(outline), resumeInput),
       emit,
-      parseRewrite,
+      (text) => parseRewrite(text, resume, outline),
       ANALYSIS_STREAM_OPTIONS,
+      1,
     ), "model")
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown error"
