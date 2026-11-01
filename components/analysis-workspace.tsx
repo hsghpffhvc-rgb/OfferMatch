@@ -19,12 +19,14 @@ import {
   clearEvidenceInWorkspace,
   detectIncompleteSession,
   getIncompleteAgentState,
+  getPersistedEvidenceState,
   getPersistedInputs,
   getPersistedInterviewState,
   patchWorkspace,
   type IncompleteSessionKind,
 } from "@/lib/workspace-session"
 import { HeroHeadline } from "@/components/hero-headline"
+import { buildEvidenceTextFromState } from "@/lib/agent/evidence-gap"
 import type { AgentPhase, OutlineResult } from "@/lib/agent/types"
 import {
   getFallbackOutline,
@@ -52,6 +54,18 @@ export function AnalysisWorkspace() {
 
   const isStreaming = state.status === "streaming"
   const isEvidenceReady = state.status === "done" && !!state.persona && !!state.outline && !state.rewrite
+
+  const [evidenceSubmitted, setEvidenceSubmitted] = useState(false)
+  useEffect(() => {
+    const saved = getPersistedEvidenceState()
+    setEvidenceSubmitted(Boolean(saved?.submitted))
+  }, [state.rewrite, state.persona, state.outline, state.status])
+
+  const needsRewriteRetry =
+    evidenceSubmitted
+    && Boolean(state.persona && state.outline)
+    && !state.rewrite
+    && !isStreaming
   const isAnalysisDone = state.status === "done" && !!state.persona && !!state.rewrite
   const scores = state.rewrite?.scores ?? null
   const showFallbackBanner = Boolean(state.usedFallback || state.streamInterrupted)
@@ -87,13 +101,23 @@ export function AnalysisWorkspace() {
           status: "done",
           streamInterrupted: partial.status === "streaming" || partial.status === "error",
         })
+      } else if (partial.persona && partial.outline) {
+        // A/B 已完成、阶段 D 未完成：这是新流程的正常中间态，不能伪造重写结果
+        setState({
+          ...partial,
+          status: "done",
+          rewrite: partial.rewrite ?? null,
+          streamInterrupted: partial.status === "streaming" || partial.status === "error",
+          usedFallback: false,
+          error: null,
+        })
       } else if (partial.persona || partial.outline || partial.rewrite) {
         setState({
           ...partial,
           status: "done",
           persona: partial.persona ?? getFallbackPersona(),
           outline: partial.outline ?? getFallbackOutline(),
-          rewrite: partial.rewrite ?? getFallbackRewrite(getPersistedInputs().resume, partial.outline ?? undefined),
+          rewrite: partial.rewrite ?? null,
           streamInterrupted: true,
           usedFallback: true,
           source: "fallback",
@@ -134,6 +158,17 @@ export function AnalysisWorkspace() {
       evidence: evidenceText,
       analysisId: state.analysisId,
     })
+  }
+
+  const handleRetryRewrite = () => {
+    const saved = getPersistedEvidenceState()
+    if (!saved) return
+    const text = buildEvidenceTextFromState({
+      gaps: saved.gaps,
+      answers: saved.answers,
+      skippedGapIds: saved.skippedGapIds,
+    })
+    handleEvidenceSubmit(text)
   }
 
   const scrollToPhase = (phase: AgentPhase | null) => {
@@ -277,6 +312,23 @@ export function AnalysisWorkspace() {
 
                   {/* 左：重写简历 | 右：整体匹配度（同一行顶对齐） */}
                   <div id="phase-D" className="order-3 min-w-0 lg:col-start-1 lg:row-start-2">
+                    {needsRewriteRetry ? (
+                      <div className="rounded-3xl border border-amber-300/60 bg-amber-50/70 p-4">
+                        <p className="text-sm font-medium text-amber-950">阶段D 简历重写未完成</p>
+                        <p className="mt-1 text-xs leading-relaxed text-amber-900/80">
+                          证据已提交，但重写没有成功返回（可能是超时或网络中断）。重试会沿用你已经补好的证据，无需重新填写。
+                        </p>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={handleRetryRewrite}
+                          className="mt-3 gap-1.5 rounded-full gradient-purple text-primary-foreground shadow-soft"
+                        >
+                          <RefreshCw className="size-3.5" aria-hidden="true" />
+                          重新执行重写
+                        </Button>
+                      </div>
+                    ) : null}
                     {resumeMarkdown}
                   </div>
                   <div className="order-6 min-w-0 lg:col-start-2 lg:row-start-2">

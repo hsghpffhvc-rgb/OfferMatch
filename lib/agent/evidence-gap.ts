@@ -62,6 +62,26 @@ function clampScore(value: number): number {
 }
 
 /** 与阶段 C 的 label 区间保持一致 */
+/** 把用户的证据问答序列化为阶段 D 的上下文文本（面板与重试入口共用） */
+export function buildEvidenceTextFromState(params: {
+  gaps: EvidenceGap[]
+  answers: Record<string, string>
+  skippedGapIds?: string[]
+}): string {
+  const skipped = params.skippedGapIds ?? []
+  const lines: string[] = ["【用户补充的证据】"]
+  for (const gap of params.gaps) {
+    const answer = (params.answers[gap.id] ?? "").trim()
+    lines.push(`- 追问：${gap.question}（关键词：${gap.keyword}）`)
+    if (skipped.includes(gap.id) || !answer) {
+      lines.push("  回答：无相关经历/数据（该缺口请用 XXX 占位，不得编造）")
+    } else {
+      lines.push(`  回答：${answer}`)
+    }
+  }
+  return lines.join("\n")
+}
+
 export function resolveMatchLabel(overallAfter: number): string {
   if (overallAfter >= 85) return "高度匹配"
   if (overallAfter >= 71) return "较匹配"

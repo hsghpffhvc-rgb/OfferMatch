@@ -1,4 +1,5 @@
 import { getModel, getOpenAIClient, shouldDisableThinking } from "@/lib/openai"
+import { buildMarkdownFromRewrite } from "@/lib/pdf/resume-to-markdown"
 import { extractJsonFromText } from "@/lib/agent/parse-json"
 import { sanitizeRewriteResult } from "@/lib/agent/keyword-filter"
 import { parseInterviewResult } from "@/lib/agent/interview-result"
@@ -236,6 +237,15 @@ const ANALYSIS_STREAM_OPTIONS: StreamPhaseOptions = {
   jsonMode: true,
 }
 
+/** 阶段 D 输出体量最大（评分 + 结构化简历 + Markdown），需要足够的输出预算 */
+const REWRITE_STREAM_OPTIONS: StreamPhaseOptions = {
+  publishContent: false,
+  jsonMode: true,
+  maxCompletionTokens: 16000,
+  temperature: 0.3,
+  timeoutMs: 180_000,
+}
+
 function markSource<T extends { source?: ResultSource }>(
   data: T,
   source: ResultSource,
@@ -356,6 +366,10 @@ function parseRewrite(
       }))
     : fallback.modifications
 
+  const rawModelMarkdown =
+    typeof value.rewrittenResumeMarkdown === "string" ? value.rewrittenResumeMarkdown.trim() : ""
+  const modelMarkdown = rawModelMarkdown.includes("重写服务暂时不可用") ? "" : rawModelMarkdown
+
   const normalized = {
     source: "model",
     scores: {
@@ -390,12 +404,15 @@ function parseRewrite(
       sections: normalizedSections,
       skills: normalizedSkills,
     },
-    rewrittenResumeMarkdown:
-      typeof value.rewrittenResumeMarkdown === "string" && value.rewrittenResumeMarkdown.trim()
-        ? value.rewrittenResumeMarkdown
-        : fallback.rewrittenResumeMarkdown,
+    rewrittenResumeMarkdown: modelMarkdown,
     modifications: normalizedModifications,
   } as RewriteResult
+
+  // 模型偶尔会漏掉 rewrittenResumeMarkdown：用结构化数据自渲染，避免展示兜底占位文案
+  if (!normalized.rewrittenResumeMarkdown.trim()) {
+    const rendered = buildMarkdownFromRewrite(normalized)
+    if (rendered.trim()) normalized.rewrittenResumeMarkdown = rendered
+  }
 
   return sanitizeRewriteResult(normalized)
 }
@@ -655,8 +672,8 @@ export async function runRewritePipeline(
       buildPhaseCUserPrompt(jd, JSON.stringify(outline), resumeInput, evidence),
       emit,
       (text) => parseRewrite(text, resume, outline),
-      ANALYSIS_STREAM_OPTIONS,
-      1,
+      REWRITE_STREAM_OPTIONS,
+      2,
     ), "model")
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown error"

@@ -19,7 +19,6 @@ import {
 import {
   getFallbackOutline,
   getFallbackPersona,
-  getFallbackRewrite,
 } from "@/lib/agent/fallback-content"
 import { AnalyticsEvent, track } from "@/lib/analytics"
 import { saveCloudAnalysisSession } from "@/lib/cloud-history"
@@ -319,7 +318,7 @@ export function useAgentStream() {
             status: "done",
             persona: prev.persona ?? getFallbackPersona(),
             outline: prev.outline ?? getFallbackOutline(),
-            rewrite: prev.rewrite ?? getFallbackRewrite(resume),
+            rewrite: prev.rewrite ?? null,
             usedFallback: true,
             streamInterrupted: true,
             source: "fallback",
@@ -364,7 +363,7 @@ export function useAgentStream() {
         status: "done",
         persona: prev.persona ?? getFallbackPersona(),
         outline: prev.outline ?? getFallbackOutline(),
-        rewrite: prev.rewrite ?? getFallbackRewrite(resume),
+        rewrite: prev.rewrite ?? null,
         streamInterrupted: true,
         usedFallback: true,
         source: "fallback",

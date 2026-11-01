@@ -18,6 +18,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { useEvidenceGap } from "@/lib/hooks/use-evidence-gap"
 import { DIMENSIONS, type OutlineResult, type PersonaResult } from "@/lib/agent/types"
+import { buildEvidenceTextFromState } from "@/lib/agent/evidence-gap"
 import { cn } from "@/lib/utils"
 
 interface EvidenceGapPanelProps {
@@ -100,24 +101,12 @@ export function EvidenceGapPanel({
 
   if (showNoGapHint) return null
 
-  const buildEvidenceText = (): string => {
-    const lines: string[] = []
-    lines.push("【用户补充的证据】")
-    for (const gap of state.gaps) {
-      const skipped = state.skippedGapIds.includes(gap.id)
-      const answer = (state.answers[gap.id] ?? "").trim()
-      lines.push(`- 追问：${gap.question}（关键词：${gap.keyword}）`)
-      if (skipped || !answer) {
-        lines.push("  回答：无相关经历/数据（该缺口请用 XXX 占位，不得编造）")
-      } else {
-        lines.push(`  回答：${answer}`)
-      }
-    }
-    return lines.join("\n")
-  }
-
   const handleSubmit = () => {
-    const text = buildEvidenceText()
+    const text = buildEvidenceTextFromState({
+      gaps: state.gaps,
+      answers: state.answers,
+      skippedGapIds: state.skippedGapIds,
+    })
     markSubmitted()
     onApplied(text)
   }
