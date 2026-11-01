@@ -1,9 +1,14 @@
 import "server-only"
 
 import { createCanvas } from "@napi-rs/canvas"
-import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs"
+import { getDocument, GlobalWorkerOptions } from "pdfjs-dist/legacy/build/pdf.mjs"
 import { createWorker } from "tesseract.js"
 import { ensurePdfjsWorker } from "@/lib/document/ensure-pdf-worker"
+
+// Vercel Serverless 下 worker 文件可能未被追踪进部署包，
+// 兜底指向 CDN，确保 pdfjs 总能找到 worker。
+GlobalWorkerOptions.workerSrc =
+  "https://cdn.jsdelivr.net/npm/pdfjs-dist@6.0.227/legacy/build/pdf.worker.min.mjs"
 
 /** 可提取文本少于此阈值时，判定为扫描版 PDF 并启用 OCR */
 const MIN_MEANINGFUL_CHARS = 40

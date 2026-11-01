@@ -873,6 +873,70 @@ interface ResumePreviewProps {
 
 ---
 
+### 4.10 JD 缺失证据追问（阶段 E / F）
+
+**优先级**：P0
+**依赖**：阶段 C（`RewriteResult.scores.keywordAnalysis`）
+**阶段**：第四阶段
+
+**功能描述**：
+阶段 C 只做"基于已有事实的重写"，缺口信息目前只展示为关键词标签，用户看完无法转化为行动。本模块在阶段 C 之后补一条交互闭环：
+
+1. **阶段 E（追问生成）**：读取 JD、候选人画像、关键词缺口与七维 gaps，生成 3-6 条具体追问，每条追问必须锚定简历中真实存在的项目/公司/数字，引导用户复盘项目（做了什么 → 为什么做 → 结果多少）。
+2. **阶段 F（证据回填）**：用户作答（或跳过）后，把回答中的事实转成结构化 highlight 回填到简历对应章节，并更新七维 `after` 分数与关键词覆盖。
+
+**输入**：
+- 阶段 E：`jd` + `PersonaResult` + `RewriteResult`（服务端压缩为 compact context）
+- 阶段 F：`jd` + 同一份 compact context + 用户回答列表 `EvidenceAnswer[]`
+
+**输出**：
+```typescript
+// 阶段 E
+{ gaps: EvidenceGap[] /* 3-6 条 */, coachingNote: string }
+
+// 阶段 F
+{
+  patches: EvidencePatch[],              // 待合并的结构化 highlight
+  dimensionScores: Partial<Record<DimensionKey, number>>, // 仅受影响维度
+  keywordAnalysis: KeywordAnalysis,
+  projectRetro: ProjectRetroItem[],
+}
+```
+
+**强约束**：
+- 追问必须包含简历原文锚点；禁止"你是否熟悉 X""请做自我介绍"类无效题。
+- 回填只允许使用「用户回答中出现的事实 + 简历已有事实」；回答没有数字时不得编造数字，返回 `confidence: "low"` 与 `needsMoreInfo: true`。
+- 总分不在服务端计算：服务端只返回维度 `after` 分，前端统一调用 `calculateOverall()` 重算，避免与权重脱节。
+- 新增字段全部可选，不改动既有 SSE 事件格式与 `AgentPhase` 联合类型。
+
+**SSE 事件**（新增，独立于 A-D）：
+```
+{ type: "evidence_phase", phase: "E"|"F", status: "start"|"complete"|"error", message?: string }
+{ type: "evidence_gaps", data: EvidenceGapResult }
+{ type: "evidence_refined", data: EvidenceRefineResult }
+```
+
+**前端组件**：
+- `components/evidence-gap-panel.tsx`：六态（idle / loading / questions / refining / applied / error）
+- 挂载位置：`components/analysis-workspace.tsx` 左列，`HeroInput` 与 `InterviewPanel` 之间
+- 回填结果通过 `applyEvidencePatches()` 合并进 `state.rewrite`，预览 / PDF / 历史自动同步
+
+**文件**：
+- `lib/agent/evidence-gap.ts`：类型、compact context、回填合并、结果解析
+- `lib/agent/prompts-gap.ts`：阶段 E / F 系统提示词
+- `app/api/evidence-gap/route.ts`：`action: "ask" | "refine"`
+- `lib/hooks/use-evidence-gap.ts`
+
+**验收标准**：
+- [ ] 分析完成后，若存在 ≥3 项缺口，自动生成 3-6 条追问，每条都能在简历中找到被引用的原文锚点
+- [ ] 作答后简历预览与 PDF 出现新 bullet，关键词覆盖与维度分同步更新，总分严格按 20/20/20/10/10/10/10 权重重算
+- [ ] 回答含糊时不产生编造数字，标注"待确认"并给出下一问
+- [ ] 刷新页面后已回答题目与回填结果可恢复
+- [ ] AI 不可用时降级示例数据，页面不白屏
+- [ ] 可基于新证据重新生成面试题（阶段 D 复用 `buildInterviewContext`）
+
+---
+
 ## 变更记录
 
 | 日期 | 变更 |
@@ -881,3 +945,4 @@ interface ResumePreviewProps {
 | 2026-08-07 | 新增 4.7 空状态优化（TrendChart + StatCard + 首次引导） |
 | 2026-08-07 | 新增 4.8 PDF 导出（Gengar 模板，11 个子模块） |
 | 2026-08-07 | 新增 4.9 模块依赖关系图 |
+| 2026-10-30 | 新增 4.10 JD 缺失证据追问（阶段 E / F，`/api/evidence-gap`） |

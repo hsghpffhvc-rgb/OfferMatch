@@ -222,13 +222,112 @@ export interface RewriteResult {
 export interface AgentAnalysisResult {
   persona: PersonaResult
   outline: OutlineResult
-  rewrite: RewriteResult
+  /** 证据收集完成并重写后才有；A/B 阶段完成时为 null */
+  rewrite: RewriteResult | null
   source?: ResultSource
 }
 
 export interface ChatRequestBody {
   jd: string
   resume: string
+}
+
+/* ------------------------------------------------------------------ */
+/* 阶段 E / F：JD 缺失证据追问与回填                                     */
+/* 独立于 AgentPhase（A-D），避免影响既有 reasoningByPhase 字面量         */
+/* ------------------------------------------------------------------ */
+
+export type EvidencePhase = "E" | "F"
+
+/** 缺口严重度：critical 直接影响过筛，optional 属于加分项 */
+export type GapSeverity = "critical" | "important" | "optional"
+
+/** 追问类型，决定回答提示的写法 */
+export type GapQuestionType =
+  | "experience" // 是否真做过这类事
+  | "metric"     // 结果数字
+  | "scope"      // 范围与规模
+  | "method"     // 具体做法
+  | "outcome"    // 最终影响
+
+/** 单条证据缺口 + 追问 */
+export interface EvidenceGap {
+  id: string
+  dimension: DimensionKey
+  /** 对应的 JD 能力关键词 */
+  keyword: string
+  /** JD 原文要求（≤40 字） */
+  jdRequirement: string
+  /** 为什么判定为缺失（一句，引用简历现状） */
+  whyMissing: string
+  /** 面向用户的追问（≤60 字，必须具体到项目/动作/数字） */
+  question: string
+  questionType: GapQuestionType
+  /** 2-3 条回答提示 */
+  answerHints: string[]
+  severity: GapSeverity
+  /** 建议补进简历的章节 type */
+  relatedSection?: string
+  /** 从简历摘录的原文锚点；完全没有相关经历时留空 */
+  resumeAnchor?: string
+}
+
+export interface EvidenceGapResult {
+  gaps: EvidenceGap[]
+  coachingNote: string
+  source?: ResultSource
+}
+
+/** 用户对某条缺口的回答 */
+export interface EvidenceAnswer {
+  gapId: string
+  keyword: string
+  answer: string
+  /** 原始追问，回填时用于 grounding（可选，避免模型脱题） */
+  question?: string
+  skipped?: boolean
+}
+
+/** 回填补丁：把一条回答转成结构化 highlight */
+export interface EvidencePatch {
+  gapId: string
+  /** experience | projects | education | awards | languages */
+  sectionType: string
+  /** 目标条目的 order（上下文里给出）；找不到时省略 */
+  itemOrder?: number
+  highlight: StructuredResumeHighlight
+  matchedKeywords: string[]
+  /** 回答的可信度，low 时前端标「待确认」 */
+  confidence: "high" | "medium" | "low"
+  needsMoreInfo: boolean
+  followUpQuestion?: string
+}
+
+/** 项目复盘要点，供阶段 D 复用 */
+export interface ProjectRetroItem {
+  project: string
+  strength: string
+  missingMetric: string
+  nextProbe: string
+}
+
+export interface EvidenceRefineResult {
+  patches: EvidencePatch[]
+  /** 仅受影响维度的新 after 分；总分由前端 calculateOverall 重算 */
+  dimensionScores: Partial<Record<DimensionKey, number>>
+  keywordAnalysis: KeywordAnalysis
+  projectRetro: ProjectRetroItem[]
+  source?: ResultSource
+}
+
+export interface EvidenceGapRequestBody {
+  action: "ask" | "refine"
+  jd: string
+  persona?: PersonaResult
+  rewrite?: RewriteResult
+  /** 前置证据收集阶段使用：原始简历文本 */
+  resume?: string
+  answers?: EvidenceAnswer[]
 }
 
 /** SSE 事件类型 */
@@ -243,6 +342,9 @@ export type StreamEvent =
     }
   | { type: "done"; data: AgentAnalysisResult; source?: ResultSource }
   | { type: "interview_done"; data: InterviewResult; source?: ResultSource }
+  | { type: "evidence_phase"; phase: EvidencePhase; status: PhaseStatus; message?: string }
+  | { type: "evidence_gaps"; data: EvidenceGapResult; source?: ResultSource }
+  | { type: "evidence_refined"; data: EvidenceRefineResult; source?: ResultSource }
   | { type: "error"; message: string; phase?: AgentPhase }
 
 export type StreamEventEmitter = (event: StreamEvent) => void

@@ -14,9 +14,22 @@ import {
   PHASE_D_SYSTEM,
   buildPhaseDUserPrompt,
 } from "@/lib/agent/prompts-interview"
+import {
+  PHASE_E_SYSTEM,
+  PHASE_F_SYSTEM,
+  buildPhaseEUserPrompt,
+  buildPhaseFUserPrompt,
+} from "@/lib/agent/prompts-gap"
 import type { InterviewContext } from "@/lib/agent/interview-context"
+import {
+  parseEvidenceGapResult,
+  parseEvidenceRefineResult,
+  type EvidenceGapContext,
+} from "@/lib/agent/evidence-gap"
 import { buildFallbackInterview } from "@/lib/agent/interview-fallback"
 import {
+  getFallbackEvidenceGaps,
+  getFallbackEvidenceRefine,
   getFallbackOutline,
   getFallbackPersona,
   getFallbackRewrite,
@@ -25,6 +38,10 @@ import { assertAiConfigured, isAiConfigError } from "@/lib/agent/ai-config"
 import type {
   AgentAnalysisResult,
   AgentPhase,
+  EvidenceAnswer,
+  EvidenceGapResult,
+  EvidencePhase,
+  EvidenceRefineResult,
   InterviewResult,
   OutlineResult,
   PersonaResult,
@@ -55,8 +72,32 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+/** 阶段 E / F 与主流水线共用一次流式调用，但使用独立事件族 */
+type StreamStage = AgentPhase | EvidencePhase
+
+function isEvidenceStage(stage: StreamStage): stage is EvidencePhase {
+  return stage === "E" || stage === "F"
+}
+
+function stageStartMessage(stage: StreamStage): string {
+  switch (stage) {
+    case "A":
+      return "正在深度解析岗位 JD…"
+    case "B":
+      return "正在逆向推导理想简历大纲…"
+    case "C":
+      return "正在对比重写简历…"
+    case "D":
+      return "正在生成面试问题…"
+    case "E":
+      return "正在定位缺失的匹配证据…"
+    case "F":
+      return "正在把回答回填进简历…"
+  }
+}
+
 async function streamPhase(
-  phase: AgentPhase,
+  phase: StreamStage,
   system: string,
   user: string,
   emit: StreamEventEmitter,
@@ -65,19 +106,23 @@ async function streamPhase(
   const openai = getOpenAIClient()
   const model = getModel()
 
-  emit({
-    type: "phase",
-    phase,
-    status: "start",
-    message:
-      phase === "A"
-        ? "正在深度解析职位描述…"
-        : phase === "B"
-          ? "正在逆向推导理想简历大纲…"
-          : phase === "C"
-            ? "正在对比重写简历…"
-            : "正在生成面试问题…",
-  })
+  const startMessage =
+    phase === "A"
+      ? "正在深度解析职位描述…"
+      : phase === "B"
+        ? "正在逆向推导理想简历大纲…"
+        : phase === "C"
+          ? "正在对比重写简历…"
+          : phase === "D"
+            ? "正在生成面试问题…"
+            : phase === "E"
+              ? "正在定位证据缺口…"
+              : "正在回填简历亮点…"
+  if (isEvidenceStage(phase)) {
+    emit({ type: "evidence_phase", phase, status: "start", message: startMessage })
+  } else {
+    emit({ type: "phase", phase: phase as AgentPhase, status: "start", message: startMessage })
+  }
 
   const stream = await openai.chat.completions.create(
     {
@@ -111,7 +156,7 @@ async function streamPhase(
     if (!delta) continue
     firstTokenAt ??= Date.now()
     fullText += delta
-    if (options.publishContent !== false) {
+    if (options.publishContent !== false && !isEvidenceStage(phase)) {
       emit({ type: "reasoning", phase, content: delta })
     }
   }
@@ -139,7 +184,7 @@ async function streamPhase(
  * 全部失败时抛出最后一次错误，由调用方切换预置兜底数据。
  */
 async function streamPhaseWithRetry(
-  phase: AgentPhase,
+  phase: StreamStage,
   system: string,
   user: string,
   emit: StreamEventEmitter,
@@ -281,7 +326,7 @@ function parseRewrite(
     const defaultValue = fallback.scores[key]
     if (!isRecord(candidate) || !isRecord(defaultValue)) return defaultValue
     return {
-      ...defaultValue,
+      ...(defaultValue as Record<string, unknown>),
       before: typeof candidate.before === "number" ? candidate.before : defaultValue.before,
       after: typeof candidate.after === "number" ? candidate.after : defaultValue.after,
       gaps: isStringArray(candidate.gaps) ? candidate.gaps : defaultValue.gaps,
@@ -440,42 +485,12 @@ export async function runAgentPipeline(
   emit({ type: "result", phase: "B", data: outline, source: outline.source ?? "model" })
   emit({ type: "phase", phase: "B", status: "complete" })
 
-  // 阶段 C（需要简历；若为空则基于 JD 生成模板）
-  const resumeInput =
-    resume.trim() ||
-    "（用户尚未提供简历，请基于理想大纲生成一份示例对齐简历，并在修改理由中说明这是模板生成。）"
-
-  let rewrite: RewriteResult
-  try {
-    if (pipelineSource === "fallback") {
-      throw new Error("upstream fallback")
-    }
-    rewrite = markSource(await streamJsonPhaseWithRetry(
-      "C",
-      PHASE_C_SYSTEM,
-      buildPhaseCUserPrompt(jd, JSON.stringify(outline), resumeInput),
-      emit,
-      (text) => parseRewrite(text, resume, outline),
-      ANALYSIS_STREAM_OPTIONS,
-      1,
-    ), "model")
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : "unknown error"
-    if (isAiConfigError(error)) {
-      emit({ type: "error", message: reason, phase: "C" })
-      throw error
-    }
-    console.warn(`phase_C_fallback: ${reason}`)
-    rewrite = getFallbackRewrite(resume, outline)
-    pipelineSource = "fallback"
-  }
-  emit({ type: "result", phase: "C", data: rewrite, source: rewrite.source ?? "model" })
-  emit({ type: "phase", phase: "C", status: "complete" })
-
+  // 证据收集（阶段 E）与重写（阶段 C）延后到前端完成证据收集后再触发，
+  // 这里只完成 A/B，把原始简历暂存到 done 事件里供后续阶段使用。
   const result: AgentAnalysisResult = {
     persona,
     outline,
-    rewrite,
+    rewrite: null,
     source: pipelineSource,
   }
   emit({ type: "done", data: result, source: pipelineSource })
@@ -544,4 +559,135 @@ export async function runInterviewPipeline(
   emit({ type: "interview_done", data: interview, source })
 
   return interview
+}
+
+/** 阶段 E：基于 JD 缺口与现有经历生成追问 */
+export async function runEvidenceGapPipeline(
+  jd: string,
+  context: EvidenceGapContext,
+  emit: StreamEventEmitter,
+): Promise<EvidenceGapResult> {
+  let result: EvidenceGapResult
+  let source: ResultSource = "model"
+
+  try {
+    const phaseEText = await streamPhaseWithRetry(
+      "E",
+      PHASE_E_SYSTEM,
+      buildPhaseEUserPrompt(jd, context),
+      emit,
+      {
+        publishContent: false,
+        // 3-6 条追问 + 字段，预留结构空间
+        maxCompletionTokens: 2400,
+        jsonMode: true,
+        temperature: 0.3,
+        timeoutMs: 60_000,
+      },
+    )
+    result = markSource(parseEvidenceGapResult(phaseEText), "model")
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "unknown error"
+    console.warn(`evidence_gap_fallback: ${reason}`)
+    result = { ...getFallbackEvidenceGaps(), source: "fallback" }
+    source = "fallback"
+  }
+
+  const payload: EvidenceGapResult = { ...result, source }
+  emit({ type: "evidence_gaps", data: payload, source })
+  emit({ type: "evidence_phase", phase: "E", status: "complete" })
+
+  return payload
+}
+
+/** 阶段 F：把用户回答回填为简历亮点并更新受影响的维度分 */
+export async function runEvidenceRefinePipeline(
+  jd: string,
+  context: EvidenceGapContext,
+  answers: EvidenceAnswer[],
+  emit: StreamEventEmitter,
+): Promise<EvidenceRefineResult> {
+  const effectiveAnswers = answers.filter(
+    (answer) => !answer.skipped && answer.answer.trim().length > 0,
+  )
+
+  let result: EvidenceRefineResult
+  let source: ResultSource = "model"
+
+  try {
+    if (effectiveAnswers.length === 0) {
+      throw new Error("没有有效回答")
+    }
+
+    const phaseFText = await streamPhaseWithRetry(
+      "F",
+      PHASE_F_SYSTEM,
+      buildPhaseFUserPrompt(jd, context, effectiveAnswers),
+      emit,
+      {
+        publishContent: false,
+        maxCompletionTokens: 2800,
+        jsonMode: true,
+        temperature: 0.2,
+        timeoutMs: 60_000,
+      },
+    )
+    result = markSource(parseEvidenceRefineResult(phaseFText), "model")
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "unknown error"
+    console.warn(`evidence_refine_fallback: ${reason}`)
+    result = { ...getFallbackEvidenceRefine(), source: "fallback" }
+    source = "fallback"
+  }
+
+  const payload: EvidenceRefineResult = { ...result, source }
+  emit({ type: "evidence_refined", data: payload, source })
+  emit({ type: "evidence_phase", phase: "F", status: "complete" })
+
+  return payload
+}
+
+
+/** 阶段 C：基于 JD、大纲、原始简历与用户补充的证据重写简历并评分 */
+export async function runRewritePipeline(
+  jd: string,
+  persona: PersonaResult,
+  outline: OutlineResult,
+  resume: string,
+  evidence: string,
+  emit: StreamEventEmitter,
+): Promise<RewriteResult> {
+  const resumeInput =
+    resume.trim() ||
+    "（用户尚未提供简历，请基于理想大纲生成一份示例对齐简历，并在修改理由中说明这是模板生成。）"
+
+  let rewrite: RewriteResult
+  let source: ResultSource = "model"
+
+  try {
+    rewrite = markSource(await streamJsonPhaseWithRetry(
+      "C",
+      PHASE_C_SYSTEM,
+      buildPhaseCUserPrompt(jd, JSON.stringify(outline), resumeInput, evidence),
+      emit,
+      (text) => parseRewrite(text, resume, outline),
+      ANALYSIS_STREAM_OPTIONS,
+      1,
+    ), "model")
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "unknown error"
+    if (isAiConfigError(error)) {
+      emit({ type: "error", message: reason, phase: "C" })
+      throw error
+    }
+    console.warn(`phase_C_fallback: ${reason}`)
+    rewrite = getFallbackRewrite(resume, outline)
+    source = "fallback"
+  }
+
+  const payload: RewriteResult = { ...rewrite, source: rewrite.source ?? source }
+  emit({ type: "result", phase: "C", data: payload, source })
+  emit({ type: "phase", phase: "C", status: "complete" })
+
+  return payload
 }

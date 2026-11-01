@@ -1,6 +1,6 @@
 import type { InterviewResult, PersonaResult, RewriteResult } from "@/lib/agent/types"
 import type { PersistedAgentState, PersistedInterviewState } from "@/lib/workspace-session"
-import { patchWorkspace } from "@/lib/workspace-session"
+import { emptyEvidence, patchWorkspace } from "@/lib/workspace-session"
 
 const HISTORY_KEY = "offermatch:history:v1"
 const MAX_RECORDS = 20
@@ -155,6 +155,26 @@ export function attachInterviewToLatestHistory(interview: InterviewResult): bool
   return true
 }
 
+/**
+ * 阶段 F 回填后同步「最近一条」历史记录，保证历史列表里的分数与简历一致。
+ * 与 attachInterviewToLatestHistory 保持同一策略。
+ */
+export function updateLatestHistoryRewrite(rewrite: RewriteResult): boolean {
+  const records = listHistoryRecords()
+  if (!records.length) return false
+  const [latest, ...rest] = records
+  writeAll([
+    {
+      ...latest,
+      rewrite,
+      overallAfter: rewrite.scores?.overallAfter ?? latest.overallAfter,
+      label: rewrite.scores?.label ?? latest.label,
+    },
+    ...rest,
+  ])
+  return true
+}
+
 /** 将某条历史恢复到当前工作台（含面试结果，若有） */
 export function restoreHistoryToWorkspace(record: HistoryRecord): void {
   const agent: PersistedAgentState = {
@@ -175,6 +195,7 @@ export function restoreHistoryToWorkspace(record: HistoryRecord): void {
   patchWorkspace({
     agent,
     interview: interviewState,
+    evidence: { ...emptyEvidence },
     inputs: {
       jd: record.jd,
       resume: record.resume,

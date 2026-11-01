@@ -5,6 +5,7 @@ import { Eraser, RefreshCw } from "lucide-react"
 import { TopNav } from "@/components/top-nav"
 import { HeroInput } from "@/components/hero-input"
 import { InterviewPanel } from "@/components/interview-panel"
+import { EvidenceGapPanel } from "@/components/evidence-gap-panel"
 import { MatchScoreCard } from "@/components/match-score-card"
 import { KeywordGapCard } from "@/components/keyword-gap-card"
 import { StrengthWeaknessCard } from "@/components/strength-weakness-card"
@@ -15,6 +16,7 @@ import { useAgentStream } from "@/lib/hooks/use-agent-stream"
 import type { InterviewStatus } from "@/lib/hooks/use-interview-stream"
 import {
   clearWorkspace,
+  clearEvidenceInWorkspace,
   detectIncompleteSession,
   getIncompleteAgentState,
   getPersistedInputs,
@@ -23,7 +25,7 @@ import {
   type IncompleteSessionKind,
 } from "@/lib/workspace-session"
 import { HeroHeadline } from "@/components/hero-headline"
-import type { AgentPhase } from "@/lib/agent/types"
+import type { AgentPhase, OutlineResult } from "@/lib/agent/types"
 import {
   getFallbackOutline,
   getFallbackPersona,
@@ -32,8 +34,9 @@ import {
 import { AnalyticsEvent, track } from "@/lib/analytics"
 
 export function AnalysisWorkspace() {
-  const { state, analyze, reset, setState } = useAgentStream()
+  const { state, analyze, rewriteResume, reset, setState } = useAgentStream()
   const [lastJd, setLastJd] = useState("")
+  const [lastResume, setLastResume] = useState(() => getPersistedInputs().resume)
   const [resumePrompt, setResumePrompt] = useState<{
     kind: IncompleteSessionKind
     resumePhase: AgentPhase | null
@@ -48,6 +51,7 @@ export function AnalysisWorkspace() {
   }, [])
 
   const isStreaming = state.status === "streaming"
+  const isEvidenceReady = state.status === "done" && !!state.persona && !!state.outline && !state.rewrite
   const isAnalysisDone = state.status === "done" && !!state.persona && !!state.rewrite
   const scores = state.rewrite?.scores ?? null
   const showFallbackBanner = Boolean(state.usedFallback || state.streamInterrupted)
@@ -109,12 +113,27 @@ export function AnalysisWorkspace() {
 
   const handleAnalyze = (jd: string, resume: string) => {
     setLastJd(jd)
+    setLastResume(resume)
     setInterviewStatus("idle")
     patchWorkspace({
-      inputs: { lastJd: jd },
+      inputs: { lastJd: jd, jd, resume },
       ui: { interviewPromptDismissed: false },
     })
+    // 新一轮分析：上一轮的证据追问不能串到新 JD 上
+    clearEvidenceInWorkspace()
     analyze(jd, resume)
+  }
+
+  const handleEvidenceSubmit = (evidenceText: string) => {
+    if (!state.persona || !state.outline) return
+    void rewriteResume({
+      jd: lastJd,
+      persona: state.persona,
+      outline: state.outline,
+      resume: lastResume,
+      evidence: evidenceText,
+      analysisId: state.analysisId,
+    })
   }
 
   const scrollToPhase = (phase: AgentPhase | null) => {
@@ -248,6 +267,18 @@ export function AnalysisWorkspace() {
                   {/* 左：PDF + 模拟面试（同宽）；右：关键词 + 亮点短板 */}
                   <div className="order-4 flex min-w-0 flex-col gap-4 lg:col-start-1 lg:row-start-3">
                     {resumePdf}
+                    {isEvidenceReady && sessionReady ? (
+                      <EvidenceGapPanel
+                        analysisId={state.analysisId}
+                        jd={lastJd}
+                        persona={state.persona}
+                        outline={state.outline}
+                        resume={lastResume}
+                        isAnalyzing={isStreaming}
+                        isRewriting={isStreaming && state.currentPhase === "C"}
+                        onApplied={handleEvidenceSubmit}
+                      />
+                    ) : null}
                     {isAnalysisDone && sessionReady ? (
                       <InterviewPanel
                         analysisId={state.analysisId}

@@ -262,24 +262,32 @@ export function useAgentStream() {
               industry: event.data.persona?.industry?.slice(0, 40) ?? null,
               source: event.source ?? event.data.source ?? "model",
             })
-            // 完整生成成功后写入本地历史记录
-            try {
-              saveHistoryRecord({
+            // A/B 阶段完成时不写历史（rewrite 尚未生成）；重写完成后在 rewriteResume 里写入
+            if (event.data.rewrite) {
+              try {
+                saveHistoryRecord({
+                  persona: event.data.persona,
+                  rewrite: event.data.rewrite,
+                  jd,
+                  resume,
+                })
+              } catch {
+                // 历史写入失败不影响主流程
+              }
+              void saveCloudAnalysisSession({
+                sessionId,
                 persona: event.data.persona,
                 rewrite: event.data.rewrite,
                 jd,
                 resume,
+                source: event.source ?? event.data.source ?? "model",
               })
-            } catch {
-              // 历史写入失败不影响主流程
             }
-            void saveCloudAnalysisSession({
-              sessionId,
-              persona: event.data.persona,
-              rewrite: event.data.rewrite,
-              jd,
-              resume,
-              source: event.source ?? event.data.source ?? "model",
+          } else if (event.type === "error") {
+            track(AnalyticsEvent.analysisFailed, {
+              session_id: sessionId,
+              has_resume: hasResume,
+              message: event.message.slice(0, 120),
             })
           }
           // stream error 可能随后走 fallback，失败埋点只在硬失败路径上报
@@ -366,12 +374,135 @@ export function useAgentStream() {
     }
   }, [])
 
+  const rewriteResume = useCallback(
+    async (params: {
+      jd: string
+      persona: PersonaResult
+      outline: OutlineResult
+      resume: string
+      evidence: string
+      analysisId?: string
+    }) => {
+      abortRef.current?.abort()
+      const controller = new AbortController()
+      abortRef.current = controller
+
+      setState((prev) => ({
+        ...prev,
+        status: "streaming",
+        currentPhase: "C",
+        phaseMessage: "正在基于补充证据重写简历…",
+        error: null,
+      }))
+
+      let receivedResult = false
+      let latestRewrite: RewriteResult | null = null
+
+      try {
+        const response = await fetch("/api/rewrite", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jd: params.jd,
+            persona: params.persona,
+            outline: params.outline,
+            resume: params.resume,
+            evidence: params.evidence,
+          }),
+          signal: controller.signal,
+        })
+
+        if (!response.ok) {
+          const err = await response.json().catch(() => ({ error: "请求失败" }))
+          throw new Error(err.error ?? `HTTP ${response.status}`)
+        }
+
+        const reader = response.body?.getReader()
+        if (!reader) throw new Error("无法读取流式响应")
+
+        const decoder = new TextDecoder()
+        let buffer = ""
+
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split("\n\n")
+          buffer = lines.pop() ?? ""
+
+          for (const line of lines) {
+            const trimmed = line.trim()
+            if (!trimmed.startsWith("data:")) continue
+            const json = trimmed.slice(5).trim()
+            if (!json) continue
+            const event = JSON.parse(json) as StreamEvent
+
+            if (event.type === "result" && event.phase === "C") {
+              receivedResult = true
+              latestRewrite = event.data as RewriteResult
+              setState((prev) => ({
+                ...prev,
+                rewrite: event.data as RewriteResult,
+                source: event.source ?? prev.source ?? "model",
+                usedFallback: (event.source ?? "model") === "fallback" || Boolean(prev.usedFallback),
+              }))
+            } else if (event.type === "phase" && event.phase === "C") {
+              setState((prev) => ({
+                ...prev,
+                currentPhase: "C",
+                phaseMessage: event.status === "start" ? event.message ?? prev.phaseMessage : prev.phaseMessage,
+                status: event.status === "error" ? "error" : "streaming",
+                error: event.status === "error" ? event.message ?? "重写失败" : null,
+              }))
+            } else if (event.type === "error") {
+              setState((prev) => ({ ...prev, status: "error", error: event.message }))
+            }
+          }
+        }
+
+        setState((prev) => ({
+          ...prev,
+          status: prev.rewrite ? "done" : prev.status,
+          currentPhase: prev.rewrite ? "C" : prev.currentPhase,
+        }))
+
+        if (receivedResult && latestRewrite) {
+          const rw = latestRewrite
+          if (rw) {
+            try {
+              saveHistoryRecord({ persona: params.persona, rewrite: rw, jd: params.jd, resume: params.resume })
+            } catch {
+              // ignore
+            }
+            void saveCloudAnalysisSession({
+              sessionId: params.analysisId ?? `s-${Date.now()}`,
+              persona: params.persona,
+              rewrite: rw,
+              jd: params.jd,
+              resume: params.resume,
+              source: stateRef.current.source ?? "model",
+            })
+          }
+        }
+      } catch (error) {
+        if ((error as Error).name === "AbortError") return
+        setState((prev) => ({
+          ...prev,
+          status: "error",
+          error: error instanceof Error ? error.message : "重写失败",
+        }))
+      }
+    },
+    [],
+  )
+
   const cancel = useCallback(() => {
     abortRef.current?.abort()
     setState((prev) => ({ ...prev, status: prev.status === "streaming" ? "idle" : prev.status }))
   }, [])
 
-  return { state, analyze, reset, cancel, setState }
+  return { state, analyze, rewriteResume, reset, cancel, setState }
 }
 
 export type { AgentAnalysisResult }

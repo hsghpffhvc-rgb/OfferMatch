@@ -44,6 +44,8 @@ export const PHASE_C_SYSTEM = `你是一位简历优化专家，同时也是一�
 6. 每一条经历、项目、亮点都必须写完整句子，必须可直接进入简历。
 7. 所有亮点必须包含动作、对象、方法、结果中的至少两项，且优先包含量化信息。
 8. 若某些信息无法从原始简历可靠推断，宁可留空，也不要编造。
+9. 【前置证据】若用户在【用户补充的证据】中提供了某条经历/数据/工具/场景，必须优先使用这些事实，不得改动数字与结论；这些证据与原始简历共同构成重写依据。
+10. 【占位符】对于 JD 要求但原始简历与用户证据中都不存在的能力/经历/数据，不得编造，必须在对应 bullet 或字段中使用 "XXX" 占位符明确标出缺失（例如 "负责 XXX 模块的 XXX 指标提升"），并在 keywordAnalysis.stillMissing 与 actionItems 中列出，提示用户后续补充。
 9. 个人信息、工作经历、技能、教育背景等必须结构化输出，不能只放在 Markdown 文本里。
 10. Markdown 只是展示与兜底，结构化 JSON 才是 PDF 渲染主来源。
 11. gaps / improvements / strengths / weaknesses / actionItems 每项一句中文，每个数组最多 3 条，避免冗长。
@@ -409,6 +411,10 @@ export function buildPhaseCUserPrompt(
   jd: string,
   outlineJson: string,
   resume: string,
+  evidence: string = "",
 ): string {
-  return `目标 JD：\n${jd}\n\n理想简历大纲（JSON）：\n${outlineJson}\n\n用户原始简历：\n${resume}\n\n请完成匹配度评估与差异化重写，只输出 JSON。`
+  const evidenceBlock = evidence.trim()
+    ? `\n\n用户补充的证据（来自证据收集阶段，必须优先使用，未补的缺口用 XXX 占位）：\n${evidence}`
+    : ""
+  return `目标 JD：\n${jd}\n\n理想简历大纲（JSON）：\n${outlineJson}\n\n用户原始简历：\n${resume}${evidenceBlock}\n\n请完成匹配度评估与差异化重写，只输出 JSON。`
 }

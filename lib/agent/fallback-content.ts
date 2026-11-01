@@ -1,4 +1,6 @@
 import type {
+  EvidenceGapResult,
+  EvidenceRefineResult,
   InterviewResult,
   OutlineResult,
   PersonaResult,
@@ -387,5 +389,120 @@ export function getFallbackInterview(): InterviewResult {
     source: "fallback",
     questions: FALLBACK_INTERVIEW.questions.map((q) => ({ ...q })),
     preparationChecklist: [...FALLBACK_INTERVIEW.preparationChecklist],
+  }
+}
+
+export const FALLBACK_EVIDENCE_GAPS: EvidenceGapResult = {
+  source: "fallback",
+  coachingNote: "这一轮只补事实、不改写事实，答不上来的可以直接跳过。",
+  gaps: [
+    {
+      id: "sample-gap-001",
+      dimension: "quantification",
+      keyword: "数据结果",
+      jdRequirement: "要求用可量化结果说明个人贡献",
+      whyMissing: "示例简历里的项目描述缺少前后对比数据",
+      question: "你最想放大的那个项目，改前和改后各是什么指标，差距有多大？",
+      questionType: "metric",
+      answerHints: ["改前的基线数字", "你负责的那一步", "改后结果与统计口径"],
+      severity: "critical",
+      relatedSection: "projects",
+      resumeAnchor: "",
+    },
+    {
+      id: "sample-gap-002",
+      dimension: "experienceRelevance",
+      keyword: "协作推进",
+      jdRequirement: "要求跨团队协作与项目推进经验",
+      whyMissing: "示例简历只写了自己负责的模块，没有体现协作范围",
+      question: "你推进项目时对接了哪些角色，出现分歧时你具体做了什么？",
+      questionType: "method",
+      answerHints: ["对接的角色与人数", "分歧的具体场景", "你怎么推动达成一致"],
+      severity: "important",
+      relatedSection: "experience",
+      resumeAnchor: "",
+    },
+    {
+      id: "sample-gap-003",
+      dimension: "starCompleteness",
+      keyword: "复盘迭代",
+      jdRequirement: "要求具备复盘与持续迭代意识",
+      whyMissing: "示例简历没有写上线后的验证与迭代动作",
+      question: "项目上线后你用什么数据判断有效，后续又改了哪一版？",
+      questionType: "outcome",
+      answerHints: ["上线后的验证指标", "发现的问题", "第二版改了什么"],
+      severity: "optional",
+      relatedSection: "projects",
+      resumeAnchor: "",
+    },
+  ],
+}
+
+export function getFallbackEvidenceGaps(): EvidenceGapResult {
+  return {
+    ...FALLBACK_EVIDENCE_GAPS,
+    source: "fallback",
+    gaps: FALLBACK_EVIDENCE_GAPS.gaps.map((gap) => ({
+      ...gap,
+      answerHints: [...gap.answerHints],
+    })),
+  }
+}
+
+export const FALLBACK_EVIDENCE_REFINE: EvidenceRefineResult = {
+  source: "fallback",
+  patches: [
+    {
+      gapId: "sample-gap-001",
+      sectionType: "projects",
+      itemOrder: 1,
+      highlight: {
+        title: "结果可量化",
+        action: "针对关键环节做对比实验并沉淀口径统一的基线数据",
+        metric: "",
+        result: "结果指标较改前有明确提升（请替换为你的真实数字）",
+      },
+      matchedKeywords: ["数据结果"],
+      confidence: "low",
+      needsMoreInfo: true,
+      followUpQuestion: "请补充改前与改后的具体数字和统计口径。",
+    },
+  ],
+  dimensionScores: {},
+  keywordAnalysis: {
+    jdKeywords: [],
+    matched: [],
+    missing: [],
+    newlyCovered: [],
+    stillMissing: [],
+  },
+  projectRetro: [
+    {
+      project: "示例项目",
+      strength: "能讲清关键动作与方法",
+      missingMetric: "缺前后对比数字",
+      nextProbe: "改前的基线是多少？",
+    },
+  ],
+}
+
+export function getFallbackEvidenceRefine(): EvidenceRefineResult {
+  return {
+    ...FALLBACK_EVIDENCE_REFINE,
+    source: "fallback",
+    patches: FALLBACK_EVIDENCE_REFINE.patches.map((patch) => ({
+      ...patch,
+      highlight: { ...patch.highlight },
+      matchedKeywords: [...patch.matchedKeywords],
+    })),
+    dimensionScores: {},
+    keywordAnalysis: {
+      jdKeywords: [],
+      matched: [],
+      missing: [],
+      newlyCovered: [],
+      stillMissing: [],
+    },
+    projectRetro: FALLBACK_EVIDENCE_REFINE.projectRetro.map((item) => ({ ...item })),
   }
 }

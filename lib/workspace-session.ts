@@ -1,5 +1,7 @@
 import type {
   AgentPhase,
+  EvidenceGap,
+  EvidenceRefineResult,
   InterviewResult,
   OutlineResult,
   PersonaResult,
@@ -67,6 +69,32 @@ export interface WorkspaceSnapshot {
   /** 未完成会话的滚动定位 phase */
   resumePhase?: AgentPhase | null
   ui?: WorkspaceUiPrefs
+  /** 阶段 E / F 证据追问进度（旧快照可能没有该字段） */
+  evidence?: PersistedEvidenceState
+}
+
+/** 证据追问可持久化的状态 */
+export type PersistedEvidenceStatus =
+  | "idle"
+  | "loading"
+  | "questions"
+  | "refining"
+  | "applied"
+  | "error"
+
+export interface PersistedEvidenceState {
+  /** 记录这次追问属于哪一次分析，避免跨分析串场 */
+  analysisId?: string
+  status: PersistedEvidenceStatus
+  gaps: EvidenceGap[]
+  coachingNote: string
+  /** gapId -> 用户回答 */
+  answers: Record<string, string>
+  /** 用户明确跳过的 gap id */
+  skippedGapIds?: string[]
+  result: EvidenceRefineResult | null
+  error: string | null
+  usedFallback: boolean
 }
 
 const emptyAgent: PersistedAgentState = {
@@ -105,6 +133,17 @@ const emptyInputs: WorkspaceInputs = {
   jdFileName: null,
   resumePhoto: null,
   lastJd: "",
+}
+
+export const emptyEvidence: PersistedEvidenceState = {
+  status: "idle",
+  gaps: [],
+  coachingNote: "",
+  answers: {},
+  skippedGapIds: [],
+  result: null,
+  error: null,
+  usedFallback: false,
 }
 
 /** 同页软跳转时保留（模块级）；关闭浏览器后靠 localStorage 恢复 */
@@ -177,6 +216,7 @@ function ensureSnapshot(): WorkspaceSnapshot {
       inputs: emptyInputs,
       updatedAt: Date.now(),
       resumePhase: null,
+      evidence: { ...emptyEvidence },
     }
   }
   return memory
@@ -189,6 +229,7 @@ export function patchWorkspace(partial: {
   inputs?: Partial<WorkspaceInputs>
   resumePhase?: AgentPhase | null
   ui?: Partial<WorkspaceUiPrefs>
+  evidence?: PersistedEvidenceState
 }): void {
   const current = ensureSnapshot()
   memory = {
@@ -199,6 +240,7 @@ export function patchWorkspace(partial: {
     resumePhase:
       partial.resumePhase !== undefined ? partial.resumePhase : current.resumePhase,
     ui: partial.ui ? { ...current.ui, ...partial.ui } : current.ui,
+    evidence: partial.evidence ?? current.evidence ?? { ...emptyEvidence },
   }
   writeStorage(memory)
 }
@@ -275,6 +317,27 @@ export function setInterviewPromptDismissed(dismissed: boolean): void {
 
 export function isInterviewPromptDismissed(): boolean {
   return Boolean(getWorkspace()?.ui?.interviewPromptDismissed)
+}
+
+/** 开始新一轮分析时清掉上一轮的证据追问，避免串到新 JD */
+export function clearEvidenceInWorkspace(): void {
+  patchWorkspace({ evidence: { ...emptyEvidence } })
+}
+
+/** 阶段 E / F 进度落盘（每次追问请求、每道作答后调用） */
+export function saveEvidenceState(evidence: PersistedEvidenceState): void {
+  patchWorkspace({ evidence })
+}
+
+export function getPersistedEvidenceState(): PersistedEvidenceState | null {
+  const evidence = getWorkspace()?.evidence
+  if (!evidence || evidence.status === "idle") return null
+  return {
+    ...emptyEvidence,
+    ...evidence,
+    gaps: evidence.gaps ?? [],
+    answers: evidence.answers ?? {},
+  }
 }
 
 export function getPersistedAgentState(): PersistedAgentState | null {
