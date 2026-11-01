@@ -49,7 +49,7 @@ export const initialAgentStreamState: AgentStreamState = {
   status: "idle",
   currentPhase: null,
   phaseMessage: null,
-  reasoningByPhase: { A: "", B: "", C: "", D: "" },
+  reasoningByPhase: { A: "", B: "", C: "", D: "", E: "" },
   reasoningText: "",
   persona: null,
   outline: null,
@@ -390,7 +390,7 @@ export function useAgentStream() {
       setState((prev) => ({
         ...prev,
         status: "streaming",
-        currentPhase: "C",
+        currentPhase: "D",
         phaseMessage: "正在基于补充证据重写简历…",
         error: null,
       }))
@@ -438,7 +438,7 @@ export function useAgentStream() {
             if (!json) continue
             const event = JSON.parse(json) as StreamEvent
 
-            if (event.type === "result" && event.phase === "C") {
+            if (event.type === "result" && event.phase === "D") {
               receivedResult = true
               latestRewrite = event.data as RewriteResult
               setState((prev) => ({
@@ -447,10 +447,10 @@ export function useAgentStream() {
                 source: event.source ?? prev.source ?? "model",
                 usedFallback: (event.source ?? "model") === "fallback" || Boolean(prev.usedFallback),
               }))
-            } else if (event.type === "phase" && event.phase === "C") {
+            } else if (event.type === "phase" && event.phase === "D") {
               setState((prev) => ({
                 ...prev,
-                currentPhase: "C",
+                currentPhase: "D",
                 phaseMessage: event.status === "start" ? event.message ?? prev.phaseMessage : prev.phaseMessage,
                 status: event.status === "error" ? "error" : "streaming",
                 error: event.status === "error" ? event.message ?? "重写失败" : null,
@@ -464,7 +464,7 @@ export function useAgentStream() {
         setState((prev) => ({
           ...prev,
           status: prev.rewrite ? "done" : prev.status,
-          currentPhase: prev.rewrite ? "C" : prev.currentPhase,
+          currentPhase: prev.rewrite ? "D" : prev.currentPhase,
         }))
 
         if (receivedResult && latestRewrite) {

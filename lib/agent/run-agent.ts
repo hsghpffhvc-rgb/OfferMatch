@@ -72,29 +72,13 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-/** 阶段 E / F 与主流水线共用一次流式调用，但使用独立事件族 */
+/** 阶段 F 与主流水线共用一次流式调用，但使用独立事件族 */
 type StreamStage = AgentPhase | EvidencePhase
 
 function isEvidenceStage(stage: StreamStage): stage is EvidencePhase {
-  return stage === "E" || stage === "F"
+  return stage === "F"
 }
 
-function stageStartMessage(stage: StreamStage): string {
-  switch (stage) {
-    case "A":
-      return "正在深度解析岗位 JD…"
-    case "B":
-      return "正在逆向推导理想简历大纲…"
-    case "C":
-      return "正在对比重写简历…"
-    case "D":
-      return "正在生成面试问题…"
-    case "E":
-      return "正在定位缺失的匹配证据…"
-    case "F":
-      return "正在把回答回填进简历…"
-  }
-}
 
 async function streamPhase(
   phase: StreamStage,
@@ -112,11 +96,11 @@ async function streamPhase(
       : phase === "B"
         ? "正在逆向推导理想简历大纲…"
         : phase === "C"
-          ? "正在对比重写简历…"
+          ? "正在定位缺失的匹配证据…"
           : phase === "D"
-            ? "正在生成面试问题…"
+            ? "正在对比重写简历…"
             : phase === "E"
-              ? "正在定位证据缺口…"
+              ? "正在生成面试问题…"
               : "正在回填简历亮点…"
   if (isEvidenceStage(phase)) {
     emit({ type: "evidence_phase", phase, status: "start", message: startMessage })
@@ -506,7 +490,7 @@ export async function runInterviewPipeline(
     assertAiConfigured()
   } catch (error) {
     const message = error instanceof Error ? error.message : "AI 未配置"
-    emit({ type: "error", message, phase: "D" })
+    emit({ type: "error", message, phase: "E" })
     throw error
   }
 
@@ -516,7 +500,7 @@ export async function runInterviewPipeline(
 
   try {
     const phaseDText = await streamPhaseWithRetry(
-      "D",
+      "E",
       PHASE_D_SYSTEM,
       buildPhaseDUserPrompt(jd, context),
       emit,
@@ -536,7 +520,7 @@ export async function runInterviewPipeline(
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown error"
     if (isAiConfigError(error)) {
-      emit({ type: "error", message: reason, phase: "D" })
+      emit({ type: "error", message: reason, phase: "E" })
       throw error
     }
     console.warn(`interview_prediction_fallback: ${reason}`)
@@ -554,8 +538,8 @@ export async function runInterviewPipeline(
     finishReason: metrics?.finishReason,
     source,
   }))
-  emit({ type: "result", phase: "D", data: interview, source })
-  emit({ type: "phase", phase: "D", status: "complete" })
+  emit({ type: "result", phase: "E", data: interview, source })
+  emit({ type: "phase", phase: "E", status: "complete" })
   emit({ type: "interview_done", data: interview, source })
 
   return interview
@@ -572,7 +556,7 @@ export async function runEvidenceGapPipeline(
 
   try {
     const phaseEText = await streamPhaseWithRetry(
-      "E",
+      "C",
       PHASE_E_SYSTEM,
       buildPhaseEUserPrompt(jd, context),
       emit,
@@ -595,7 +579,7 @@ export async function runEvidenceGapPipeline(
 
   const payload: EvidenceGapResult = { ...result, source }
   emit({ type: "evidence_gaps", data: payload, source })
-  emit({ type: "evidence_phase", phase: "E", status: "complete" })
+  emit({ type: "phase", phase: "C", status: "complete" })
 
   return payload
 }
@@ -648,7 +632,7 @@ export async function runEvidenceRefinePipeline(
 }
 
 
-/** 阶段 C：基于 JD、大纲、原始简历与用户补充的证据重写简历并评分 */
+/** 阶段 D：基于 JD、大纲、原始简历与用户补充的证据重写简历并评分 */
 export async function runRewritePipeline(
   jd: string,
   persona: PersonaResult,
@@ -666,7 +650,7 @@ export async function runRewritePipeline(
 
   try {
     rewrite = markSource(await streamJsonPhaseWithRetry(
-      "C",
+      "D",
       PHASE_C_SYSTEM,
       buildPhaseCUserPrompt(jd, JSON.stringify(outline), resumeInput, evidence),
       emit,
@@ -677,7 +661,7 @@ export async function runRewritePipeline(
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown error"
     if (isAiConfigError(error)) {
-      emit({ type: "error", message: reason, phase: "C" })
+      emit({ type: "error", message: reason, phase: "D" })
       throw error
     }
     console.warn(`phase_C_fallback: ${reason}`)
@@ -686,8 +670,8 @@ export async function runRewritePipeline(
   }
 
   const payload: RewriteResult = { ...rewrite, source: rewrite.source ?? source }
-  emit({ type: "result", phase: "C", data: payload, source })
-  emit({ type: "phase", phase: "C", status: "complete" })
+  emit({ type: "result", phase: "D", data: payload, source })
+  emit({ type: "phase", phase: "D", status: "complete" })
 
   return payload
 }

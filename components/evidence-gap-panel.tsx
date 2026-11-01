@@ -1,10 +1,12 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import { useRouter } from "next/navigation"
 import {
   AlertCircle,
   ArrowRight,
   CheckCircle2,
+  ExternalLink,
   HelpCircle,
   Lightbulb,
   Loader2,
@@ -59,7 +61,8 @@ export function EvidenceGapPanel({
   isRewriting,
   onApplied,
 }: EvidenceGapPanelProps) {
-  const { state, startGaps, setAnswer, commitAnswer, skipGap, reset } = useEvidenceGap()
+  const { state, startGaps, setAnswer, commitAnswer, skipGap, markSubmitted, reset } = useEvidenceGap()
+  const router = useRouter()
   const [dismissed, setDismissed] = useState(false)
   const [openHints, setOpenHints] = useState<Record<string, boolean>>({})
 
@@ -87,7 +90,9 @@ export function EvidenceGapPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAnalyzing, persona, state.status, dismissed])
 
-  if (!persona || isAnalyzing) return null
+  if (!persona) return null
+  // 重写进行中隐藏交互区；已提交时仍保留折叠摘要卡
+  if (isAnalyzing && !state.submitted) return null
 
   const hasGaps = state.gaps.length > 0
   const showEntry = !dismissed && state.status === "idle"
@@ -113,13 +118,14 @@ export function EvidenceGapPanel({
 
   const handleSubmit = () => {
     const text = buildEvidenceText()
+    markSubmitted()
     onApplied(text)
   }
 
   const canSubmit = state.status === "questions" && hasGaps && !isRewriting
 
   return (
-    <section className="mt-6 w-full max-w-4xl text-left" id="phase-E">
+    <section className="w-full text-left" id="phase-C">
       <div className="rounded-3xl border border-border/60 bg-card p-5 shadow-soft">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex items-center gap-2.5">
@@ -133,7 +139,7 @@ export function EvidenceGapPanel({
               </p>
             </div>
           </div>
-          {hasGaps && (
+          {!state.submitted && hasGaps && (
             <span className="rounded-full bg-accent px-2.5 py-0.5 text-xs font-semibold text-accent-foreground">
               已回答 {answeredCount}/{state.gaps.length}
               {skippedCount > 0 ? ` · 跳过 ${skippedCount}` : ""}
@@ -141,7 +147,32 @@ export function EvidenceGapPanel({
           )}
         </div>
 
-        {showEntry && (
+        {state.submitted && (
+          <div className="mt-4 rounded-2xl border border-emerald-200/80 bg-emerald-50/70 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="flex items-center gap-1.5 text-sm font-medium text-emerald-950">
+                  <CheckCircle2 className="size-4" aria-hidden="true" />
+                  阶段C 证据补足已提交
+                </p>
+                <p className="mt-1 text-xs leading-relaxed text-emerald-900/80">
+                  已提交 {answeredCount} 条证据，{skippedCount} 条标记为「无相关经历/数据」（重写时将用 XXX 占位）。
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 rounded-full"
+                onClick={() => router.push("/evidence")}
+              >
+                <ExternalLink className="size-3.5" aria-hidden="true" />
+                查看详情
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {showEntry && !state.submitted && (
           <div className="mt-4 rounded-2xl border border-dashed border-primary/30 bg-primary/5 p-4">
             <p className="text-sm font-medium text-foreground">检测到证据缺口，先补事实再重写</p>
             <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
@@ -157,14 +188,14 @@ export function EvidenceGapPanel({
           </div>
         )}
 
-        {isPreparing && (
+        {isPreparing && !state.submitted && (
           <div className="mt-4 flex items-center gap-2.5 rounded-2xl bg-muted/30 p-4">
             <Loader2 className="size-4 animate-spin text-primary" aria-hidden="true" />
             <p className="text-sm text-muted-foreground">正在从 JD 与原始简历里定位证据缺口…</p>
           </div>
         )}
 
-        {state.error && (
+        {state.error && !state.submitted && (
           <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-destructive/30 bg-destructive/5 px-4 py-3">
             <p className="flex items-center gap-2 text-xs text-destructive" role="alert">
               <AlertCircle className="size-4" aria-hidden="true" />
@@ -173,7 +204,7 @@ export function EvidenceGapPanel({
           </div>
         )}
 
-        {state.usedFallback && hasGaps && (
+        {state.usedFallback && hasGaps && !state.submitted && (
           <div className="mt-4 rounded-2xl border border-border/60 bg-muted/40 px-4 py-3 text-xs text-muted-foreground" role="status">
             AI 暂时不可用，已展示示例追问
             <Button variant="ghost" size="sm" onClick={performStart} className="ml-2 gap-1.5 rounded-full text-xs">
@@ -183,11 +214,11 @@ export function EvidenceGapPanel({
           </div>
         )}
 
-        {state.coachingNote && hasGaps && !isPreparing && (
+        {state.coachingNote && hasGaps && !isPreparing && !state.submitted && (
           <p className="mt-3 text-xs text-muted-foreground">{state.coachingNote}</p>
         )}
 
-        {state.status === "questions" && hasGaps && (
+        {state.status === "questions" && hasGaps && !state.submitted && (
           <div className="mt-4 space-y-3">
             {state.gaps.map((gap, index) => {
               const severity = SEVERITY_META[gap.severity] ?? SEVERITY_META.important

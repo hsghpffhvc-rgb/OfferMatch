@@ -258,7 +258,7 @@ export function HeroInput({
     analysisId: state.analysisId,
     markdown: state.rewrite?.rewrittenResumeMarkdown ?? "",
     rewriteResult: state.rewrite,
-    isLoading: isStreaming && state.currentPhase === "C",
+    isLoading: isStreaming && state.currentPhase === "D",
     resumePhoto,
   })
 
@@ -287,7 +287,7 @@ export function HeroInput({
         analysisId={state.analysisId}
         markdown={state.rewrite?.rewrittenResumeMarkdown ?? ""}
         rewriteResult={state.rewrite}
-        isLoading={isStreaming && state.currentPhase === "C"}
+        isLoading={isStreaming && state.currentPhase === "D"}
         resumePhoto={resumePhoto}
       />
     </section>

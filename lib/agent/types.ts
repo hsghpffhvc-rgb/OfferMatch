@@ -1,4 +1,4 @@
-export type AgentPhase = "A" | "B" | "C" | "D"
+export type AgentPhase = "A" | "B" | "C" | "D" | "E"
 
 export type PhaseStatus = "start" | "streaming" | "complete" | "error"
 
@@ -233,11 +233,10 @@ export interface ChatRequestBody {
 }
 
 /* ------------------------------------------------------------------ */
-/* 阶段 E / F：JD 缺失证据追问与回填                                     */
-/* 独立于 AgentPhase（A-D），避免影响既有 reasoningByPhase 字面量         */
+/* 阶段 F：证据回填（旧流程保留，使用独立事件族，避免与 A-E 冲突）        */
 /* ------------------------------------------------------------------ */
 
-export type EvidencePhase = "E" | "F"
+export type EvidencePhase = "F"
 
 /** 缺口严重度：critical 直接影响过筛，optional 属于加分项 */
 export type GapSeverity = "critical" | "important" | "optional"

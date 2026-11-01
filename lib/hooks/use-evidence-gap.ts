@@ -28,6 +28,8 @@ export interface EvidenceGapStreamState {
   error: string | null
   usedFallback: boolean
   streamInterrupted: boolean
+  /** 已提交证据：主界面折叠为摘要卡 */
+  submitted: boolean
 }
 
 export const initialEvidenceGapState: EvidenceGapStreamState = {
@@ -39,6 +41,7 @@ export const initialEvidenceGapState: EvidenceGapStreamState = {
   error: null,
   usedFallback: false,
   streamInterrupted: false,
+  submitted: false,
 }
 
 function toPersisted(state: EvidenceGapStreamState): PersistedEvidenceState {
@@ -52,6 +55,7 @@ function toPersisted(state: EvidenceGapStreamState): PersistedEvidenceState {
     result: null,
     error: state.error,
     usedFallback: state.usedFallback,
+    submitted: state.submitted,
   }
 }
 
@@ -75,6 +79,7 @@ function fromPersisted(saved: PersistedEvidenceState | null): EvidenceGapStreamS
     error: saved.error ?? null,
     usedFallback: Boolean(saved.usedFallback),
     streamInterrupted: false,
+    submitted: Boolean(saved.submitted),
   }
 }
 
@@ -244,6 +249,10 @@ export function useEvidenceGap() {
     }))
   }, [])
 
+  const markSubmitted = useCallback(() => {
+    setState((prev) => ({ ...prev, submitted: true }))
+  }, [])
+
   const reset = useCallback(() => {
     abortRef.current?.abort()
     setState(initialEvidenceGapState)
@@ -259,5 +268,5 @@ export function useEvidenceGap() {
     })
   }, [])
 
-  return { state, startGaps, setAnswer, commitAnswer, skipGap, reset }
+  return { state, startGaps, setAnswer, commitAnswer, skipGap, markSubmitted, reset }
 }

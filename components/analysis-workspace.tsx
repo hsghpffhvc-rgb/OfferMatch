@@ -138,7 +138,14 @@ export function AnalysisWorkspace() {
 
   const scrollToPhase = (phase: AgentPhase | null) => {
     if (!phase) return
-    const id = phase === "D" ? "phase-D" : phase === "C" ? "phase-C" : "phase-analysis"
+    const id =
+      phase === "E"
+        ? "phase-E"
+        : phase === "D"
+          ? "phase-D"
+          : phase === "C"
+            ? "phase-C"
+            : "phase-analysis"
     window.setTimeout(() => {
       document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" })
     }, 150)
@@ -249,6 +256,18 @@ export function AnalysisWorkspace() {
                   <div className="order-1 flex min-w-0 flex-col gap-3 lg:col-start-1 lg:row-start-1">
                     {composer}
                     {phaseProgress}
+                    {state.persona && state.outline && sessionReady ? (
+                      <EvidenceGapPanel
+                        analysisId={state.analysisId}
+                        jd={lastJd}
+                        persona={state.persona}
+                        outline={state.outline}
+                        resume={lastResume}
+                        isAnalyzing={isStreaming}
+                        isRewriting={isStreaming && state.currentPhase === "D"}
+                        onApplied={handleEvidenceSubmit}
+                      />
+                    ) : null}
                   </div>
                   <PersonaCard
                     persona={state.persona}
@@ -257,7 +276,7 @@ export function AnalysisWorkspace() {
                   />
 
                   {/* 左：重写简历 | 右：整体匹配度（同一行顶对齐） */}
-                  <div className="order-3 min-w-0 lg:col-start-1 lg:row-start-2">
+                  <div id="phase-D" className="order-3 min-w-0 lg:col-start-1 lg:row-start-2">
                     {resumeMarkdown}
                   </div>
                   <div className="order-6 min-w-0 lg:col-start-2 lg:row-start-2">
@@ -267,19 +286,8 @@ export function AnalysisWorkspace() {
                   {/* 左：PDF + 模拟面试（同宽）；右：关键词 + 亮点短板 */}
                   <div className="order-4 flex min-w-0 flex-col gap-4 lg:col-start-1 lg:row-start-3">
                     {resumePdf}
-                    {isEvidenceReady && sessionReady ? (
-                      <EvidenceGapPanel
-                        analysisId={state.analysisId}
-                        jd={lastJd}
-                        persona={state.persona}
-                        outline={state.outline}
-                        resume={lastResume}
-                        isAnalyzing={isStreaming}
-                        isRewriting={isStreaming && state.currentPhase === "C"}
-                        onApplied={handleEvidenceSubmit}
-                      />
-                    ) : null}
                     {isAnalysisDone && sessionReady ? (
+                      <div id="phase-E">
                       <InterviewPanel
                         analysisId={state.analysisId}
                         jd={lastJd}
@@ -288,6 +296,7 @@ export function AnalysisWorkspace() {
                         isAnalyzing={isStreaming}
                         onStatusChange={setInterviewStatus}
                       />
+                      </div>
                     ) : null}
                   </div>
                   <div className="order-7 flex min-w-0 flex-col gap-6 lg:col-start-2 lg:row-start-3">

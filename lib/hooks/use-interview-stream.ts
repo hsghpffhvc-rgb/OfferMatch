@@ -72,7 +72,7 @@ export function useInterviewStream() {
           usedFallback: state.usedFallback,
           progress: state.progress,
         },
-        resumePhase: "D",
+        resumePhase: "E",
       })
     }
   }, [state])

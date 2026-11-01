@@ -181,7 +181,7 @@ export function restoreHistoryToWorkspace(record: HistoryRecord): void {
     status: "done",
     currentPhase: "C",
     phaseMessage: "已从历史记录恢复",
-    reasoningByPhase: { A: "", B: "", C: "", D: "" },
+    reasoningByPhase: { A: "", B: "", C: "", D: "", E: "" },
     reasoningText: "",
     persona: record.persona,
     outline: null,

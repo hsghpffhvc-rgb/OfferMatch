@@ -95,13 +95,15 @@ export interface PersistedEvidenceState {
   result: EvidenceRefineResult | null
   error: string | null
   usedFallback: boolean
+  /** 用户已提交证据并触发重写；界面折叠为摘要卡 */
+  submitted?: boolean
 }
 
 const emptyAgent: PersistedAgentState = {
   status: "idle",
   currentPhase: null,
   phaseMessage: null,
-  reasoningByPhase: { A: "", B: "", C: "", D: "" },
+  reasoningByPhase: { A: "", B: "", C: "", D: "", E: "" },
   reasoningText: "",
   persona: null,
   outline: null,
@@ -144,6 +146,7 @@ export const emptyEvidence: PersistedEvidenceState = {
   result: null,
   error: null,
   usedFallback: false,
+  submitted: false,
 }
 
 /** 同页软跳转时保留（模块级）；关闭浏览器后靠 localStorage 恢复 */
@@ -280,7 +283,7 @@ export function saveInterviewAnswer(params: {
         submittedQuestionIds: submitted,
       },
     },
-    resumePhase: "D",
+    resumePhase: "E",
   })
 }
 
@@ -421,7 +424,7 @@ export function detectIncompleteSession(): {
       resumePhase:
         snapshot.resumePhase
         ?? incompleteAgent?.currentPhase
-        ?? (kind === "interview" ? "D" : "A"),
+        ?? (kind === "interview" ? "E" : "A"),
       updatedAt: snapshot.updatedAt,
     }
   }
@@ -430,7 +433,7 @@ export function detectIncompleteSession(): {
   if (doneAgent) {
     return {
       kind: "done",
-      resumePhase: snapshot.resumePhase ?? "C",
+      resumePhase: snapshot.resumePhase ?? "D",
       updatedAt: snapshot.updatedAt,
     }
   }
