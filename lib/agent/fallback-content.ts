@@ -287,6 +287,11 @@ export function getFallbackOutline(): OutlineResult {
   return { ...FALLBACK_OUTLINE, source: "fallback" }
 }
 
+/**
+ * 重写兜底：只返回一份"待完善草稿"标记，不再把原始简历塞进 summary/sections/skills，
+ * 也不再生成"原始简历内容""目标岗位关键词"这类会污染投递正文的内容。
+ * 调用方应把 rewrite 视为 null 并提示重试；此对象仅用于让 UI 显示校验状态。
+ */
 export function getFallbackRewrite(
   resumeText = "",
   outline?: OutlineResult,
@@ -298,89 +303,33 @@ export function getFallbackRewrite(
       ...FALLBACK_REWRITE.scores,
       keywordAnalysis: { ...FALLBACK_REWRITE.scores.keywordAnalysis },
     },
-    resume: structuredClone(FALLBACK_REWRITE.resume),
-    modifications: FALLBACK_REWRITE.modifications.map((item) => ({
-      ...item,
-      matchedKeywords: [...item.matchedKeywords],
-    })),
-  }
-
-  const originalResume = resumeText.trim()
-  if (!originalResume) return fallback
-
-  const targetKeywords = (outline?.keyHighlights ?? []).slice(0, 8)
-  return {
-    ...fallback,
-    scores: {
-      ...fallback.scores,
-      label: "待提升",
-      weaknesses: ["本次重写服务未返回完整结构，当前保留原始简历内容"],
-      actionItems: ["可直接继续导出或面试，也可稍后点击重新生成"],
-      keywordAnalysis: {
-        ...fallback.scores.keywordAnalysis,
-        jdKeywords: targetKeywords,
-        matched: [],
-        missing: targetKeywords,
-        newlyCovered: [],
-        stillMissing: targetKeywords,
-      },
-    },
     resume: {
-      basics: {
-        name: "",
-        title: outline?.summary ?? "",
-        email: "",
-        phone: "",
-        location: "",
-        linkedin: "",
-        github: "",
-        website: "",
-        photo: "",
-      },
-      summary: {
-        text: originalResume.slice(0, 3000),
-        positioning: outline?.summary ?? "",
-        yearsExperience: 0,
-        keywords: targetKeywords,
-      },
-      sections: [
+      basics: { name: "", title: outline?.summary ?? "", email: "", phone: "", location: "", linkedin: "", github: "", website: "", photo: "" },
+      summary: { text: "", positioning: "", yearsExperience: 0, keywords: [] },
+      sections: [],
+      skills: [],
+    },
+    rewrittenResumeMarkdown: "",
+    modifications: [],
+    analysis: { requirements: [], gaps: [] },
+    verification: {
+      status: "draft",
+      truncated: false,
+      issues: [
         {
-          type: "experience",
-          title: "原始简历内容",
-          items: [
-            {
-              title: "原始简历",
-              summary: originalResume.slice(0, 5000),
-              highlights: [],
-              keywords: targetKeywords,
-              order: 1,
-            },
-          ],
+          code: "PARSE_INCOMPLETE",
+          message: resumeText.trim()
+            ? "当前没有可用的重写结果，请点击重新执行重写"
+            : "尚未提供简历内容，无法生成正式成稿",
+          severity: "error",
+          autoFixed: false,
         },
       ],
-      skills: targetKeywords.length
-        ? [{
-            group: "目标岗位关键词",
-            items: targetKeywords.map((keyword) => ({
-              name: keyword,
-              category: "目标能力",
-              level: "",
-              evidence: "",
-            })),
-          }]
-        : [],
+      pending: ["等待模型返回完整重写结果"],
     },
-    rewrittenResumeMarkdown: `# 原始简历（重写服务暂时不可用）\n\n${originalResume}`,
-    modifications: [
-      {
-        section: "完整简历",
-        original: originalResume.slice(0, 500),
-        rewritten: "已保留原始内容，未使用无关示例替换",
-        rationale: "模型重写结果暂时不可解析",
-        matchedKeywords: [],
-      },
-    ],
   }
+
+  return fallback
 }
 
 export function getFallbackInterview(): InterviewResult {

@@ -72,6 +72,8 @@ export function useResumePreviewParts({
 
   const mappedData = pdfMapping.data
   const showMarkdown = Boolean(markdown) || Boolean(isLoading)
+  // 校验状态：draft 表示不能标记为可直接投递
+  const verificationStatus = rewriteResult?.verification?.status ?? null
 
   const handleCopy = async () => {
     if (!markdown) return
@@ -91,7 +93,18 @@ export function useResumePreviewParts({
     <div className="w-full text-left">
       <div className="rounded-3xl border border-border/70 bg-card p-4 shadow-soft">
         <div className="mb-3 flex items-center justify-between gap-2">
-          <p className="text-sm font-medium">重写简历预览</p>
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-medium">重写简历预览</p>
+            {verificationStatus === "draft" ? (
+              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800">
+                待完善草稿
+              </span>
+            ) : verificationStatus === "ready" ? (
+              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+                可直接投递
+              </span>
+            ) : null}
+          </div>
           <Button
             variant="outline"
             size="sm"
@@ -113,6 +126,9 @@ export function useResumePreviewParts({
           </Button>
         </div>
         {copyError && <p role="status" className="mb-3 text-sm text-destructive">复制失败，请重试。</p>}
+        <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
+          复制与导出仅包含简历正文，不含原始简历、匹配分析或修改建议。
+        </p>
         <div className="max-h-96 overflow-y-auto rounded-2xl border border-border/50 bg-background p-4">
           {isLoading && !markdown ? (
             <p className="text-sm text-muted-foreground">

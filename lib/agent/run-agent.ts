@@ -1,7 +1,10 @@
 import { getModel, getOpenAIClient, shouldDisableThinking } from "@/lib/openai"
-import { buildMarkdownFromRewrite } from "@/lib/pdf/resume-to-markdown"
+import { calculateOverall } from "@/lib/agent/types"
+import type { MatchScores } from "@/lib/agent/types"
+import { resolveMatchLabel } from "@/lib/agent/evidence-gap"
 import { extractJsonFromText } from "@/lib/agent/parse-json"
 import { sanitizeRewriteResult } from "@/lib/agent/keyword-filter"
+import { auditAndFinalizeRewrite } from "@/lib/agent/rewrite-quality"
 import { parseInterviewResult } from "@/lib/agent/interview-result"
 import {
   PHASE_A_SYSTEM,
@@ -301,10 +304,21 @@ function parseOutline(text: string): OutlineResult {
   }
 }
 
+/** 结构化简历的空白骨架：模型缺字段时保持缺失，绝不填入示例经历 */
+function emptyStructuredResume(): RewriteResult["resume"] {
+  return {
+    basics: { name: "", title: "", email: "", phone: "", location: "", linkedin: "", github: "", website: "", photo: "" },
+    summary: { text: "", positioning: "", yearsExperience: 0, keywords: [] },
+    sections: [],
+    skills: [],
+  }
+}
+
 function parseRewrite(
   text: string,
   resumeText: string,
   outline: OutlineResult,
+  evidence = "",
 ): RewriteResult {
   const value = extractJsonFromText<unknown>(text)
   if (!isRecord(value)) throw new Error("阶段 C 返回结构不完整")
@@ -348,14 +362,14 @@ function parseRewrite(
             }))
           : [],
       }))
-    : fallback.resume.sections
+    : []
   const normalizedSkills = Array.isArray(resumeValue.skills)
     ? resumeValue.skills.filter(isRecord).map((group) => ({
         ...group,
         group: typeof group.group === "string" ? group.group : "专业技能",
         items: Array.isArray(group.items) ? group.items.filter(isRecord) : [],
       }))
-    : fallback.resume.skills
+    : []
   const normalizedModifications = Array.isArray(value.modifications)
     ? value.modifications.filter(isRecord).map((item) => ({
         section: typeof item.section === "string" ? item.section : "简历内容",
@@ -365,6 +379,21 @@ function parseRewrite(
         matchedKeywords: isStringArray(item.matchedKeywords) ? item.matchedKeywords : [],
       }))
     : fallback.modifications
+
+  const analysisValue = isRecord(value.analysis) ? value.analysis : {}
+  const normalizedRequirements = Array.isArray(analysisValue.requirements)
+    ? analysisValue.requirements.filter(isRecord).map((item) => {
+        const rawStatus = typeof item.status === "string" ? item.status : "none"
+        const status = rawStatus === "direct" || rawStatus === "transferable" ? rawStatus : "none"
+        return {
+          requirement: typeof item.requirement === "string" ? item.requirement : "",
+          status: status as "direct" | "transferable" | "none",
+          evidence: isStringArray(item.evidence) ? item.evidence : [],
+          note: typeof item.note === "string" ? item.note : undefined,
+        }
+      }).filter((item) => Boolean(item.requirement))
+    : []
+  const normalizedGaps = isStringArray(analysisValue.gaps) ? analysisValue.gaps : []
 
   const rawModelMarkdown =
     typeof value.rewrittenResumeMarkdown === "string" ? value.rewrittenResumeMarkdown.trim() : ""
@@ -399,22 +428,32 @@ function parseRewrite(
       actionItems: isStringArray(scoresValue.actionItems) ? scoresValue.actionItems : fallback.scores.actionItems,
     },
     resume: {
-      basics: { ...fallback.resume.basics, ...basicsValue },
-      summary: { ...fallback.resume.summary, ...summaryValue },
+      basics: { ...emptyStructuredResume().basics, ...basicsValue },
+      summary: { ...emptyStructuredResume().summary, ...summaryValue },
       sections: normalizedSections,
       skills: normalizedSkills,
     },
     rewrittenResumeMarkdown: modelMarkdown,
     modifications: normalizedModifications,
-  } as RewriteResult
+    analysis: {
+      requirements: normalizedRequirements,
+      gaps: normalizedGaps,
+    },
+  } as unknown as RewriteResult
 
-  // 模型偶尔会漏掉 rewrittenResumeMarkdown：用结构化数据自渲染，避免展示兜底占位文案
-  if (!normalized.rewrittenResumeMarkdown.trim()) {
-    const rendered = buildMarkdownFromRewrite(normalized)
-    if (rendered.trim()) normalized.rewrittenResumeMarkdown = rendered
-  }
+  // 总分与 label 由程序按权重重算，避免模型自填不一致的分数
+  const computedBefore = calculateOverall(normalized.scores as MatchScores, true)
+  const computedAfter = calculateOverall(normalized.scores as MatchScores, false)
+  normalized.scores.overallBefore = computedBefore
+  normalized.scores.overallAfter = computedAfter
+  normalized.scores.label = resolveMatchLabel(computedAfter)
 
-  return sanitizeRewriteResult(normalized)
+  // 正文统一由结构化数据渲染，并做确定性校验：重复/内部标签/截断/无来源数字等
+  const audited = auditAndFinalizeRewrite(
+    sanitizeRewriteResult(normalized as unknown as RewriteResult),
+    { originalResume: resumeText, evidence },
+  )
+  return audited.rewrite
 }
 
 export async function runAgentPipeline(
@@ -671,19 +710,22 @@ export async function runRewritePipeline(
       PHASE_C_SYSTEM,
       buildPhaseCUserPrompt(jd, JSON.stringify(outline), resumeInput, evidence),
       emit,
-      (text) => parseRewrite(text, resume, outline),
+      (text) => parseRewrite(text, resume, outline, evidence),
       REWRITE_STREAM_OPTIONS,
       2,
     ), "model")
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown error"
-    if (isAiConfigError(error)) {
-      emit({ type: "error", message: reason, phase: "D" })
-      throw error
-    }
-    console.warn(`phase_C_fallback: ${reason}`)
-    rewrite = getFallbackRewrite(resume, outline)
-    source = "fallback"
+    // 重写失败时绝不把原始简历当成"重写成稿"回填，也不覆盖用户已有的可用版本
+    console.warn(`phase_D_rewrite_failed: ${reason}`)
+    emit({
+      type: "error",
+      phase: "D",
+      message: /长度上限|空内容|解析|结构不完整/.test(reason)
+        ? `简历重写未完成（${reason}），已保留当前版本，可点击重试`
+        : `简历重写失败：${reason}`,
+    })
+    throw error
   }
 
   const payload: RewriteResult = { ...rewrite, source: rewrite.source ?? source }

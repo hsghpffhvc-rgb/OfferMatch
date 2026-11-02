@@ -6,6 +6,7 @@ import { TopNav } from "@/components/top-nav"
 import { HeroInput } from "@/components/hero-input"
 import { InterviewPanel } from "@/components/interview-panel"
 import { EvidenceGapPanel } from "@/components/evidence-gap-panel"
+import { ResumeAuditCard } from "@/components/resume-audit-card"
 import { MatchScoreCard } from "@/components/match-score-card"
 import { KeywordGapCard } from "@/components/keyword-gap-card"
 import { StrengthWeaknessCard } from "@/components/strength-weakness-card"
@@ -31,7 +32,6 @@ import type { AgentPhase, OutlineResult } from "@/lib/agent/types"
 import {
   getFallbackOutline,
   getFallbackPersona,
-  getFallbackRewrite,
 } from "@/lib/agent/fallback-content"
 import { AnalyticsEvent, track } from "@/lib/analytics"
 
@@ -352,6 +352,7 @@ export function AnalysisWorkspace() {
                     ) : null}
                   </div>
                   <div className="order-7 flex min-w-0 flex-col gap-6 lg:col-start-2 lg:row-start-3">
+                    {state.rewrite ? <ResumeAuditCard rewrite={state.rewrite} /> : null}
                     <KeywordGapCard
                       keywordAnalysis={scores?.keywordAnalysis ?? null}
                       isLoading={isStreaming}

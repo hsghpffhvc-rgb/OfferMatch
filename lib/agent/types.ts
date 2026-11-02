@@ -211,11 +211,70 @@ export interface StructuredResume {
   skills: Array<{ group: string; items: StructuredResumeSkill[] }>
 }
 
+/** JD 要求与简历证据的映射状态（分析结果，不进正文） */
+export type RequirementStatus =
+  | "direct"        // 有直接证据，可在正文强调
+  | "transferable"  // 有可迁移经验，保留原行业与职责边界
+  | "none"          // 暂无证据，只能列为缺口
+
+export interface RequirementMapping {
+  /** JD 原始要求（一句） */
+  requirement: string
+  status: RequirementStatus
+  /** 支撑该判断的简历/证据原文片段；status=none 时为空 */
+  evidence: string[]
+  note?: string
+}
+
+export interface RewriteAnalysis {
+  requirements: RequirementMapping[]
+  /** 证据缺口：候选人本可补充、写进简历有助于过筛的能力点 */
+  gaps: string[]
+}
+
+/** 生成后校验状态：draft 表示不能标记为可直接投递 */
+export type VerificationStatus = "ready" | "draft"
+
+export type VerificationIssueCode =
+  | "TRUNCATED_OUTPUT"
+  | "INTERNAL_MARKER"
+  | "DUPLICATE_CONTENT"
+  | "SUMMARY_POLLUTION"
+  | "SKILL_ADVICE"
+  | "JD_AS_EXPERIENCE"
+  | "PLANNED_AS_SHIPPED"
+  | "TARGET_AS_RESULT"
+  | "UNSOURCED_NUMBER"
+  | "MISSING_EVIDENCE"
+  | "MISSING_SECTION"
+  | "PARSE_INCOMPLETE"
+
+export interface VerificationIssue {
+  code: VerificationIssueCode
+  message: string
+  severity: "error" | "warning"
+  /** 程序是否已自动修复 */
+  autoFixed: boolean
+}
+
+export interface RewriteVerification {
+  status: VerificationStatus
+  /** 输出是否疑似被截断 */
+  truncated: boolean
+  issues: VerificationIssue[]
+  /** 待核实 / 待补充信息，仅展示，不进正文 */
+  pending: string[]
+}
+
 export interface RewriteResult {
   scores: MatchScores
   resume: StructuredResume
+  /** 唯一正文来源：由结构化数据统一渲染，供预览、复制与导出 */
   rewrittenResumeMarkdown: string
   modifications: ModificationItem[]
+  /** JD 要求 → 证据映射（分析结果，不进正文） */
+  analysis?: RewriteAnalysis
+  verification?: RewriteVerification
   source?: ResultSource
 }
 
