@@ -287,6 +287,10 @@ export interface NormalizeReport {
   duplicatedLines: number
   droppedSkills: number
   internalMarkers: number
+  /** 技能是否来自原始简历补回（模型未输出） */
+  skillBackfilled: boolean
+  /** 是否出现过"去重会吃掉整段"的歧义情况 */
+  keepAmbiguousSection: boolean
 }
 
 function normalizeResume(resume: StructuredResume): { resume: StructuredResume; report: NormalizeReport } {
@@ -295,6 +299,8 @@ function normalizeResume(resume: StructuredResume): { resume: StructuredResume; 
     duplicatedLines: 0,
     droppedSkills: 0,
     internalMarkers: 0,
+    skillBackfilled: false,
+    keepAmbiguousSection: false,
   }
 
   const summary = polishSummary(resume.summary?.text ?? "")
@@ -351,6 +357,24 @@ function normalizeResume(resume: StructuredResume): { resume: StructuredResume; 
       })
 
       items.push({ ...item, highlights })
+    }
+
+    // 如果去重把整段吃掉了（例如工作经历与项目描述完全相同），保留该段并提示，
+    // 不能为了去重而静默删掉整个模块
+    if (!items.length && Array.isArray(section.items) && section.items.length > 0) {
+      report.duplicatedLines += 1
+      report.keepAmbiguousSection = true
+      for (const item of section.items) {
+        const fingerprint = itemContentFingerprint(item)
+        if (fingerprint) {
+          seenItems.add(fingerprint)
+          items.push({
+            ...item,
+            highlights: (item.highlights ?? []).filter((highlight) => highlightText(highlight).trim()),
+          })
+        }
+      }
+      if (!items.length) continue
     }
 
     if (!items.length) continue
@@ -691,131 +715,6 @@ function extractSourceSkills(originalResume: string): Array<{ dimension: string;
     .slice(0, 4)
 }
 
-/* ------------------------------------------------------------------ */
-/* 原文兜底解析：模型漏掉模块时，用原始简历原文补齐（不改写事实）        */
-/* ------------------------------------------------------------------ */
-
-const SECTION_HEADING_RE =
-  /^(工作经历|工作经验|项目经历|项目经验|核心项目|代表项目|主要项目|项目实践|教育背景|教育经历|专业技能|技能|荣誉奖项|获奖情况|自我评价|证书|语言能力)\s*[：:]?$/
-
-const BULLET_RE = /^[-•*·●○◦▪\u2022]\s*/
-const DATE_IN_LINE = /(\d{4}\s*[.\-/年]\s*\d{1,2}\s*月?)\s*[-–—~至]\s*(\d{4}\s*[.\-/年]\s*\d{1,2}\s*月?|至今|今)/
-
-/** 取出原文某个章节的正文行（不带章节标题本身） */
-function extractBlockLines(originalResume: string, headings: RegExp): string[] {
-  const lines = originalResume.split("\n")
-  const start = lines.findIndex((line) => headings.test(line.trim()))
-  if (start < 0) return []
-
-  const block: string[] = []
-  for (const line of lines.slice(start + 1)) {
-    if (SECTION_HEADING_RE.test(line.trim())) break
-    block.push(line)
-  }
-  return block
-}
-
-export interface ParsedOriginalItem {
-  name: string
-  role: string
-  date: { start?: string; end?: string }
-  description: string
-  bullets: string[]
-}
-
-/** 从原文项目块粗解析条目；解析不出来就退化为整块一条 */
-export function parseOriginalProjectItems(originalResume: string): ParsedOriginalItem[] {
-  const lines = extractBlockLines(originalResume, /^(项目经历|项目经验|核心项目|代表项目|主要项目|项目实践)\s*[：:]?$/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-  if (!lines.length) return []
-
-  const items: ParsedOriginalItem[] = []
-  let current: ParsedOriginalItem | null = null
-
-  const flush = () => {
-    if (current && (current.name || current.bullets.length || current.description)) items.push(current)
-    current = null
-  }
-
-  for (const line of lines) {
-    const isBullet = BULLET_RE.test(line)
-    const text = line.replace(BULLET_RE, "").trim()
-    if (!text) continue
-
-    if (isBullet) {
-      if (!current) {
-        current = { name: "", role: "", date: {}, description: "", bullets: [] }
-      }
-      current.bullets.push(text)
-      continue
-    }
-
-    // 非 bullet 行：形如 "项目名（角色） 2024.04 - 2025.12" 或 "项目名（2024.04 - 2025.12，项目负责人）"
-    const parenGroups = [...text.matchAll(/[（(]([^（()）]{1,40})[）)]/g)].map((match) => match[1])
-    const dateSource = text.match(DATE_IN_LINE) ?? parenGroups.join(" ").match(DATE_IN_LINE)
-    const roleFromParens = parenGroups
-      .map((group) => group.replace(DATE_IN_LINE, "").replace(/[，,、\s]+/g, " ").trim())
-      .find((group) => group.length > 0 && group.length <= 20) ?? ""
-
-    const head = text
-      .replace(/[（(][^（()）]{1,40}[）)]/g, " ")
-      .replace(DATE_IN_LINE, " ")
-      .replace(/[，,、\-–—\s]+$/g, "")
-      .trim()
-    const looksLikeTitle = Boolean(dateSource) || Boolean(roleFromParens) || head.length <= 40
-
-    if (looksLikeTitle && (current === null || current.bullets.length > 0)) {
-      flush()
-      current = {
-        name: head || text,
-        role: roleFromParens,
-        date: dateSource ? { start: dateSource[1].trim(), end: dateSource[2].trim() } : {},
-        description: "",
-        bullets: [],
-      }
-      continue
-    }
-
-    if (!current) {
-      current = { name: head.slice(0, 40), role: "", date: {}, description: text, bullets: [] }
-    } else if (!current.description) {
-      current.description = text
-    } else {
-      current.bullets.push(text)
-    }
-  }
-
-  flush()
-  return items.slice(0, 6)
-}
-
-/** 从原文教育块粗解析出一个教育条目 */
-export function parseOriginalEducationItems(originalResume: string): ParsedOriginalItem[] {
-  const lines = extractBlockLines(originalResume, /^(教育背景|教育经历)\s*[：:]?$/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-  if (!lines.length) return []
-
-  const text = lines.join(" ")
-  const dateMatch = text.match(DATE_IN_LINE)
-  const head = lines[0]
-    .replace(BULLET_RE, "")
-    .replace(DATE_IN_LINE, " ")
-    .replace(/[，,]+/g, " ")
-    .trim()
-  const parts = head.split(/\s{2,}|\t+/).map((part) => part.trim()).filter(Boolean)
-  const name = parts[0] ?? head.slice(0, 60)
-
-  return [{
-    name,
-    role: "",
-    date: dateMatch ? { start: dateMatch[1].trim(), end: dateMatch[2].trim() } : {},
-    description: [parts.slice(1).join(" · "), lines.slice(1).join(" ")].filter(Boolean).join(" · ").slice(0, 200),
-    bullets: [],
-  }]
-}
-
 export interface AuditContext {
   originalResume: string
   evidence?: string
@@ -846,82 +745,54 @@ export function auditAndFinalizeRewrite(
     const sourceSkillGroups = extractSourceSkills(context.originalResume)
     const sourceSkillCount = sourceSkillGroups.reduce((total, group) => total + group.items.length, 0)
     if (sourceSkillCount > 0) {
+      report.skillBackfilled = true
       resume.skills = sourceSkillGroups.map((group) => ({
         group: group.dimension,
         items: group.items.map((name) => ({ name, category: "", level: "", evidence: "原始简历" })),
       }))
       issues.push({
         code: "MISSING_SECTION",
-        message: `原始简历含技能信息但未输出，已按原文补回 ${sourceSkillCount} 项技能（按原维度分组）`,
+        message: `原始简历含技能信息但模型未输出，已按原文补回 ${sourceSkillCount} 项技能名称（仅为名词，未做筛选）`,
         severity: "warning",
         autoFixed: true,
       })
     }
   }
 
-  // 完整性兜底：原文有教育经历但模型漏掉了 → 按原文补齐（不改写）
+  // 完整性阻断：原文有教育经历但模型漏掉了，同样不照搬原文
   const hasEducationSection = (resume.sections ?? []).some((section) => section.type === "education")
   if (!hasEducationSection && /教育背景|教育经历/.test(context.originalResume)) {
-    const parsedEducation = parseOriginalEducationItems(context.originalResume)
-    if (parsedEducation.length > 0 && parsedEducation[0].name) {
-      resume.sections.push({
-        type: "education",
-        title: "教育背景",
-        items: parsedEducation.map((item, index) => ({
-          school: item.name,
-          date: item.date,
-          notes: item.description,
-          order: index + 1,
-        })),
-      })
-      issues.push({
-        code: "MISSING_SECTION",
-        message: "模型未保留教育背景，已按原始简历补齐（原文保留，请核对）",
-        severity: "warning",
-        autoFixed: true,
-      })
-    } else {
-      issues.push({
-        code: "MISSING_SECTION",
-        message: "原始简历含教育经历，但正文未包含教育背景模块，请确认是否需要补充",
-        severity: "warning",
-        autoFixed: false,
-      })
-    }
+    issues.push({
+      code: "MISSING_SECTION",
+      message: "原始简历含教育经历，但本次重写没有输出教育背景模块，请点击「重新执行重写」补齐后再投递。",
+      severity: "error",
+      autoFixed: false,
+    })
   }
 
-  // 完整性兜底：原文有项目经历但模型漏掉了 → 用原文条目补齐（只保留事实，不做改写）
+  // 完整性阻断：原文有工作经历但模型漏掉了（模型偶尔只输出部分章节）
+  const hasExperienceSection = (resume.sections ?? []).some((section) => section.type === "experience")
+  if (!hasExperienceSection && /(^|\n)\s*(工作经历|工作经验|职业经历|任职经历)/.test(context.originalResume)) {
+    issues.push({
+      code: "MISSING_SECTION",
+      message: "原始简历含工作经历，但本次重写没有输出工作经历模块，请点击「重新执行重写」补齐后再投递。",
+      severity: "error",
+      autoFixed: false,
+    })
+  }
+
+  // 完整性阻断：原文有项目经历但模型漏掉了。
+  // 不把原文照搬进正文——正文必须是经过筛选与改写的成品，
+  // 这里只标记为阻断问题（status=draft），由调用方决定是否再跑一次定向修复。
   const hasProjectsSection = (resume.sections ?? []).some((section) => section.type === "projects")
   if (!hasProjectsSection && originalHasProjectBlock(context.originalResume)) {
-    const parsedProjects = parseOriginalProjectItems(context.originalResume)
-    if (parsedProjects.length > 0) {
-      resume.sections.push({
-        type: "projects",
-        title: "项目经历",
-        items: parsedProjects.map((item, index) => ({
-          name: item.name,
-          role: item.role,
-          date: item.date,
-          summary: item.description,
-          highlights: item.bullets.map((bullet) => ({ action: bullet, metric: "", result: "" })),
-          order: index + 1,
-          notes: "以下内容按原始简历保留，未做重写，请核对后再投递",
-        })),
-      })
-      issues.push({
-        code: "MISSING_SECTION",
-        message: `模型未保留项目经历，已按原始简历补齐 ${parsedProjects.length} 个项目（原文保留，未做改写）`,
-        severity: "warning",
-        autoFixed: true,
-      })
-    } else {
-      issues.push({
-        code: "MISSING_SECTION",
-        message: "原始简历含项目经历，但正文未保留项目模块，请重新生成以保留与岗位相关的项目",
-        severity: "warning",
-        autoFixed: false,
-      })
-    }
+    issues.push({
+      code: "MISSING_SECTION",
+      message:
+        "原始简历含项目经历，但本次重写没有输出项目模块。项目与岗位相关时必须保留并重写，请点击「重新执行重写」再试。",
+      severity: "error",
+      autoFixed: false,
+    })
   }
 
   if (report.summaryPolluted) {
@@ -946,6 +817,14 @@ export function auditAndFinalizeRewrite(
       message: `已移除 ${report.droppedSkills} 条“需要展现/建议补充”式的技能描述，只保留有来源的技能`,
       severity: "warning",
       autoFixed: true,
+    })
+  }
+  if (report.keepAmbiguousSection) {
+    issues.push({
+      code: "DUPLICATE_CONTENT",
+      message: "工作经历与项目描述存在完全相同的内容，已保留两个模块，请人工合并或确认取舍",
+      severity: "warning",
+      autoFixed: false,
     })
   }
   if (report.internalMarkers > 0) {
@@ -1071,7 +950,9 @@ export function auditAndFinalizeRewrite(
     })
   }
 
+  const skillBackfilled = report.skillBackfilled
   const pending = [
+    ...(skillBackfilled ? ["技能列表由原始简历补回，请确认是否都与目标岗位相关"] : []),
     ...(rewrite.analysis?.gaps ?? []),
     ...requirements.filter((item) => item.status === "none").map((item) => `待补充证据：${item.requirement}`),
   ].filter(Boolean)

@@ -63,10 +63,14 @@ export function AnalysisWorkspace() {
     setEvidenceSubmitted(Boolean(saved?.submitted))
   }, [state.rewrite, state.persona, state.outline, state.status])
 
+  // 重写缺失或校验未通过（draft）时，都提供直接重跑的入口
+  const draftIssues = state.rewrite?.verification?.status === "draft"
+    ? (state.rewrite.verification.issues ?? []).filter((issue) => issue.severity === "error")
+    : []
   const needsRewriteRetry =
     evidenceSubmitted
     && Boolean(state.persona && state.outline)
-    && !state.rewrite
+    && (!state.rewrite || draftIssues.length > 0)
     && !isStreaming
   const isAnalysisDone = state.status === "done" && !!state.persona && !!state.rewrite
   const scores = state.rewrite?.scores ?? null
@@ -325,9 +329,14 @@ export function AnalysisWorkspace() {
                   <div id="phase-D" className="order-3 min-w-0 lg:col-start-1 lg:row-start-2">
                     {needsRewriteRetry ? (
                       <div className="rounded-3xl border border-amber-300/60 bg-amber-50/70 p-4">
-                        <p className="text-sm font-medium text-amber-950">阶段D 简历重写未完成</p>
+                        <p className="text-sm font-medium text-amber-950">
+                          {state.rewrite ? "阶段D 简历需要重新生成" : "阶段D 简历重写未完成"}
+                        </p>
                         <p className="mt-1 text-xs leading-relaxed text-amber-900/80">
-                          证据已提交，但重写没有成功返回（可能是超时或网络中断）。重试会沿用你已经补好的证据，无需重新填写。
+                          {draftIssues.length > 0
+                            ? draftIssues.map((issue) => issue.message).join("；")
+                            : "证据已提交，但重写没有成功返回（可能是超时或网络中断）。"}
+                          重试会沿用你已经补好的证据，无需重新填写。
                         </p>
                         <Button
                           type="button"

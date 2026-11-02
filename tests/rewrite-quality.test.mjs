@@ -405,8 +405,8 @@ test("场景16：原始简历含项目模块但输出缺失时给出提示", () 
   )
 })
 
-/* 17. 模型完全漏掉项目：按原文补齐，保留项目名、角色与时间 */
-test("场景17：模型漏掉项目时按原始简历补齐", () => {
+/* 17. 模型漏掉项目/教育：不把原文照搬进正文，而是阻断为待完善草稿 */
+test("场景17：漏掉项目与教育时不照搬原文，状态转为待完善草稿", () => {
   const rewrite = makeRewrite({
     resume: {
       ...makeRewrite().resume,
@@ -431,12 +431,18 @@ test("场景17：模型漏掉项目时按原始简历补齐", () => {
   ].join("\n")
 
   const result = run(rewrite, { originalResume: original })
-  assert.ok(result.markdown.includes("## 项目经历"))
-  assert.ok(result.markdown.includes("校园知识问答系统 · 项目负责人"))
-  assert.ok(result.markdown.includes("0.68"))
-  assert.ok(result.markdown.includes("## 教育背景"))
-  assert.ok(result.markdown.includes("某大学"))
-  assert.ok(result.issues.some((issue) => issue.code === "MISSING_SECTION" && issue.autoFixed))
+
+  // 正文不能出现未改写的原文段落
+  assert.equal(result.markdown.includes("## 项目经历"), false)
+  assert.equal(result.markdown.includes("## 教育背景"), false)
+  assert.equal(result.markdown.includes("设计 RAG 双路召回，召回率由 0.68 提升至 0.88"), false)
+
+  // 必须阻断为待完善草稿，并给出可操作提示
+  assert.equal(result.rewrite.verification.status, "draft")
+  assert.equal(isDeliverable(result.rewrite), false)
+  const messages = result.issues.filter((issue) => issue.code === "MISSING_SECTION")
+  assert.ok(messages.some((issue) => issue.message.includes("项目经历") && issue.severity === "error"))
+  assert.ok(messages.some((issue) => issue.message.includes("教育背景") && issue.severity === "error"))
 })
 
 /* 18. 复合技能名按维度拆分 */
@@ -460,4 +466,57 @@ test("场景18：复合技能串按能力维度拆分", () => {
   assert.deepEqual(groups.map((group) => group.group), ["产品能力", "技术能力", "工具"])
   assert.ok(result.markdown.includes("- **技术能力**：RAG、Prompt Engineering"))
   assert.equal(result.markdown.split("## 专业技能").length - 1, 1)
+})
+
+/* 19. 漏模块阻断后，补齐的模型结果可以恢复为可投递 */
+test("场景19：补齐项目章节后重新变为可投递", () => {
+  const base = makeRewrite({
+    resume: {
+      ...makeRewrite().resume,
+      sections: [
+        { type: "experience", title: "工作经历", items: [{ role: "AI产品负责人", company: "某高校", summary: "负责知识问答", highlights: [] }] },
+      ],
+      skills: [],
+    },
+  })
+  const original = "工作经历\n2024.04 - 2026.09 某高校 AI产品负责人\n\n项目经历\n校园知识问答系统（2024.04 - 2025.12，项目负责人）\n- 设计 RAG 双路召回\n"
+
+  const before = run(base, { originalResume: original })
+  assert.equal(before.rewrite.verification.status, "draft")
+
+  const repaired = makeRewrite({
+    resume: {
+      ...before.rewrite.resume,
+      sections: [
+        ...before.rewrite.resume.sections,
+        {
+          type: "projects",
+          title: "项目经历",
+          items: [
+            {
+              name: "校园知识问答系统",
+              role: "项目负责人",
+              date: { start: "2024.04", end: "2025.12" },
+              summary: "面向校园场景的 RAG 知识问答系统",
+              highlights: [{ action: "设计双路召回并完成精排", metric: "召回率由 0.68 提升至 0.88", result: "覆盖 12 个院系" }],
+            },
+          ],
+        },
+      ],
+    },
+  })
+
+  const after = run(repaired, { originalResume: original })
+  assert.equal(after.markdown.includes("## 项目经历"), true)
+  assert.equal(after.rewrite.verification.status, "ready")
+  assert.equal(isDeliverable(after.rewrite), true)
+})
+
+/* 20. 技能补回必须留下可追溯提示，不伪装成模型产出 */
+test("场景20：技能由原文补回时会标注待确认", () => {
+  const rewrite = makeRewrite({ resume: { ...makeRewrite().resume, skills: [] } })
+  const result = run(rewrite, { originalResume: "专业技能\n产品能力：用户研究、PRD 撰写" })
+  assert.ok(result.rewrite.resume.skills.length > 0)
+  assert.ok(result.rewrite.verification.pending.some((item) => item.includes("技能")))
+  assert.ok(result.issues.some((issue) => issue.code === "MISSING_SECTION" && issue.autoFixed))
 })

@@ -9,6 +9,10 @@ import {
   hasProjectSection,
   originalHasProjectBlock,
 } from "@/lib/agent/rewrite-quality"
+import {
+  getMissingSourceSections,
+  mergeRepairedSections,
+} from "@/lib/agent/section-coverage"
 import { parseInterviewResult } from "@/lib/agent/interview-result"
 import {
   PHASE_A_SYSTEM,
@@ -732,13 +736,27 @@ export async function runRewritePipeline(
     throw error
   }
 
-  // 原始简历有项目模块但重写漏掉了：补一次定向修复（最多 1 次，避免无限循环）
-  if (originalHasProjectBlock(resume) && !hasProjectSection(rewrite)) {
+  // 模型漏掉了原文中存在的模块（项目/教育）：只做一次定向修复，
+  // 修复结果必须经过改写，绝不把原文整段塞进正文。
+  const missingSections = getMissingSourceSections(rewrite, resume)
+  if (missingSections.length > 0) {
     try {
+      const missingLabels = missingSections.map((item) => item.label).join("、")
+      const sourceEvidence = missingSections
+        .map((item) => `【${item.label}原文（仅作事实依据，禁止整段照抄）】\n${item.sourceBlock}`)
+        .join("\n\n")
+
       const repairPrompt = [
         buildPhaseCUserPrompt(jd, JSON.stringify(outline), resumeInput, evidence),
         "",
-        '【本次修正要求】上一轮输出遗漏了原始简历中的项目经历。请重新输出完整 JSON，并且必须在 resume.sections 中包含 type="projects" 的章节，逐条保留并重写原始简历里的项目（项目名称、个人角色、个人行动、可核实结果）。工作经历中与该项目的重复描述请删除。',
+        `【本次修正要求】上一轮输出遗漏了原始简历中的${missingLabels}。请重新输出完整 JSON，并且必须包含对应章节：`,
+        '- 工作经历：resume.sections 中 type="experience"，每项含 role（岗位）、company（单位）、date、summary、highlights；',
+        '- 项目：resume.sections 中 type="projects"，每项含 name（项目名称）、role（个人角色）、date、summary、highlights；',
+        '- 教育：resume.sections 中 type="education"，含 school、date、degree / major。',
+        "要求：基于下列原文事实做重写（按 JD 相关性排序、STAR 化、保留真实数字与实施状态），",
+        "禁止编造，禁止把原文整段粘贴，禁止把项目角色写成正式岗位。",
+        "",
+        sourceEvidence,
       ].join("\n")
 
       const repaired = await streamJsonPhaseWithRetry(
@@ -750,10 +768,23 @@ export async function runRewritePipeline(
         REWRITE_STREAM_OPTIONS,
         1,
       )
-      if (hasProjectSection(repaired)) rewrite = markSource(repaired, "model")
+
+      const stillMissing = getMissingSourceSections(repaired, resume)
+      const fixedTypes = missingSections
+        .filter((item) => !stillMissing.some((rest) => rest.type === item.type))
+        .map((item) => item.type)
+
+      if (fixedTypes.length > 0) {
+        // 只合并被补齐的章节，其余内容沿用第一轮结果，再整体重跑质量检查
+        const merged = mergeRepairedSections(rewrite, repaired, fixedTypes)
+        rewrite = markSource(
+          auditAndFinalizeRewrite(merged, { originalResume: resume, evidence }).rewrite,
+          "model",
+        )
+      }
     } catch (repairError) {
       console.warn(
-        `phase_D_project_repair_failed: ${repairError instanceof Error ? repairError.message : "unknown"}`,
+        `phase_D_section_repair_failed: ${repairError instanceof Error ? repairError.message : "unknown"}`,
       )
     }
   }
