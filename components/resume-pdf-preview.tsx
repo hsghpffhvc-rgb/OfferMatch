@@ -9,7 +9,7 @@ import {
   useState,
   type ChangeEvent,
 } from "react"
-import { Download, ImagePlus, Search, X } from "lucide-react"
+import { Download, ImagePlus, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import type { ResumeData } from "@/lib/pdf/types"
@@ -19,6 +19,40 @@ import {
   type TemplateId,
 } from "@/lib/pdf/templates/options"
 import { AnalyticsEvent, track } from "@/lib/analytics"
+
+/**
+ * 把 PDF Blob 渲染成图片：
+ * 浏览器内置 PDF 插件在 iframe / Electron / 部分移动端常被禁用，
+ * 直接展示 canvas 截图可以保证"任何环境都能看到简历"。
+ */
+async function renderPdfPageImages(blob: Blob, maxPages = 4): Promise<string[]> {
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs")
+  pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs"
+
+  const data = new Uint8Array(await blob.arrayBuffer())
+  const doc = await pdfjs.getDocument({ data, useSystemFonts: true }).promise
+  const images: string[] = []
+  const scale = 2
+
+  try {
+    const pageCount = Math.min(doc.numPages, maxPages)
+    for (let index = 1; index <= pageCount; index++) {
+      const page = await doc.getPage(index)
+      const viewport = page.getViewport({ scale })
+      const canvas = document.createElement("canvas")
+      canvas.width = Math.ceil(viewport.width)
+      canvas.height = Math.ceil(viewport.height)
+      const ctx = canvas.getContext("2d")
+      if (!ctx) break
+      await page.render({ canvasContext: ctx, viewport, canvas }).promise
+      images.push(canvas.toDataURL("image/png"))
+    }
+  } finally {
+    await doc.cleanup()
+  }
+
+  return images
+}
 
 /** 浏览器本地生成 PDF，避免依赖易超时的服务端 /api/export-pdf */
 async function renderPdfInBrowser(resume: ResumeData): Promise<Blob> {
@@ -118,6 +152,7 @@ export function ResumePdfPreview({
   )
   const [photoError, setPhotoError] = useState<string | null>(null)
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
+  const [pageImages, setPageImages] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [lightboxOpen, setLightboxOpen] = useState(false)
@@ -175,6 +210,15 @@ export function ResumePdfPreview({
         if (prev) URL.revokeObjectURL(prev)
         return url
       })
+
+      // 优先用图片渲染预览：不依赖浏览器 PDF 插件
+      try {
+        const images = await renderPdfPageImages(blob)
+        setPageImages(images)
+      } catch (renderErr) {
+        console.warn("PDF 转图片失败，回退到内置预览:", renderErr)
+        setPageImages([])
+      }
       track(AnalyticsEvent.pdfExported, {
         analysis_id: analysisId,
         duration_ms: Date.now() - startedAt,
@@ -188,6 +232,7 @@ export function ResumePdfPreview({
         if (prev) URL.revokeObjectURL(prev)
         return null
       })
+      setPageImages([])
       let message = "PDF 生成失败"
       if (err instanceof DOMException && err.name === "AbortError") {
         message =
@@ -385,11 +430,24 @@ export function ResumePdfPreview({
             </div>
           ) : previewSrc ? (
             <>
-              {/* 手机：iframe 常不可用，引导下载 */}
-              <div className="flex flex-col items-center gap-3 px-4 py-8 text-center sm:hidden">
-                <p className="text-sm text-white/90">
-                  手机端建议直接下载 PDF 查看（浏览器内预览支持有限）
-                </p>
+              {/* 手机：直接展示页面图片，避免 iframe PDF 不兼容 */}
+              <div className="flex flex-col items-center gap-3 px-3 py-4 text-center sm:hidden">
+                {pageImages.length > 0 ? (
+                  <div className="flex w-full flex-col gap-2">
+                    {pageImages.map((image, index) => (
+                      <img
+                        key={image.slice(-32)}
+                        src={image}
+                        alt={`简历第 ${index + 1} 页`}
+                        className="w-full bg-white shadow"
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-white/90">
+                    正在准备预览，也可直接下载 PDF 查看
+                  </p>
+                )}
                 <Button
                   size="sm"
                   className="gap-1.5 rounded-full gradient-purple text-primary-foreground"
@@ -408,30 +466,38 @@ export function ResumePdfPreview({
                 </a>
               </div>
 
-              {/* 桌面：单栏预览，避免双 iframe 卡顿 */}
-              <div className="relative hidden h-[640px] overflow-hidden bg-[#525659] sm:block">
-                <iframe
-                  title="简历 PDF 主预览"
-                  src={previewSrc}
-                  className="h-full w-full border-0 bg-white"
-                />
-                <div
-                  className="group absolute inset-0 z-10 cursor-zoom-in"
-                  onClick={() => setLightboxOpen(true)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault()
-                      setLightboxOpen(true)
-                    }
-                  }}
-                  role="button"
-                  tabIndex={0}
-                  aria-label="点击放大预览简历"
-                >
-                  <span className="pointer-events-none absolute right-4 top-4 flex size-10 items-center justify-center rounded-full bg-black/55 text-white opacity-0 shadow-lg backdrop-blur transition-opacity group-hover:opacity-100">
-                    <Search className="size-5" aria-hidden="true" />
-                  </span>
-                </div>
+              {/* 桌面：优先显示 PDF 页面图片，不依赖浏览器内置 PDF 插件 */}
+              <div className="relative hidden h-[640px] overflow-y-auto bg-[#525659] p-4 sm:block">
+                {pageImages.length > 0 ? (
+                  <div
+                    className="mx-auto flex max-w-[760px] cursor-zoom-in flex-col gap-3"
+                    onClick={() => setLightboxOpen(true)}
+                    role="button"
+                    tabIndex={0}
+                    aria-label="点击放大预览简历"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault()
+                        setLightboxOpen(true)
+                      }
+                    }}
+                  >
+                    {pageImages.map((image, index) => (
+                      <img
+                        key={image.slice(-32)}
+                        src={image}
+                        alt={`简历第 ${index + 1} 页`}
+                        className="block w-full bg-white shadow-lg"
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <iframe
+                    title="简历 PDF 主预览"
+                    src={previewSrc ?? undefined}
+                    className="h-full w-full border-0 bg-white"
+                  />
+                )}
               </div>
             </>
           ) : (
@@ -475,11 +541,17 @@ export function ResumePdfPreview({
             >
               <X className="size-5" aria-hidden="true" />
             </button>
-            <iframe
-              title="简历 PDF 大图"
-              src={lightboxSrc}
-              className="h-full w-full flex-1 border-0 bg-white"
-            />
+            <div className="flex-1 overflow-y-auto bg-[#525659] p-4 sm:p-8">
+              {pageImages.length > 0 ? (
+                <div className="mx-auto flex max-w-4xl flex-col gap-4">
+                  {pageImages.map((image, index) => (
+                    <img key={image.slice(-32)} src={image} alt={`简历第 ${index + 1} 页大图`} className="w-full bg-white shadow-xl" />
+                  ))}
+                </div>
+              ) : (
+                <iframe title="简历 PDF 大图" src={lightboxSrc ?? undefined} className="h-full w-full border-0 bg-white" />
+              )}
+            </div>
           </div>
         </div>
       )}

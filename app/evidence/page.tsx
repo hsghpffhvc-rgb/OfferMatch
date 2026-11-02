@@ -4,7 +4,11 @@ import { useEffect, useState } from "react"
 import Link from "next/link"
 import { ArrowLeft, CheckCircle2, Loader2, Target } from "lucide-react"
 import { DIMENSIONS } from "@/lib/agent/types"
-import { getPersistedEvidenceState, type PersistedEvidenceState } from "@/lib/workspace-session"
+import {
+  getPersistedEvidenceState,
+  suppressResumePromptOnce,
+  type PersistedEvidenceState,
+} from "@/lib/workspace-session"
 
 const SEVERITY_META: Record<string, { label: string; className: string }> = {
   critical: { label: "关键缺口", className: "bg-red-500/10 text-red-600 ring-red-500/20" },
@@ -44,6 +48,7 @@ export default function EvidenceDetailPage() {
         <div className="flex items-center justify-between gap-3">
           <Link
             href="/"
+            onClick={suppressResumePromptOnce}
             className="inline-flex items-center gap-1.5 rounded-full px-3 py-2 text-xs font-medium text-muted-foreground transition hover:bg-muted/60 hover:text-foreground"
           >
             <ArrowLeft className="size-3.5" aria-hidden="true" />
@@ -75,6 +80,7 @@ export default function EvidenceDetailPage() {
             <p className="text-sm text-muted-foreground">暂无证据补足记录，请先回到主界面完成阶段C。</p>
             <Link
               href="/"
+              onClick={suppressResumePromptOnce}
               className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-xs font-medium text-primary-foreground"
             >
               <ArrowLeft className="size-3.5" aria-hidden="true" />

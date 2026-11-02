@@ -4,7 +4,11 @@ import type { MatchScores } from "@/lib/agent/types"
 import { resolveMatchLabel } from "@/lib/agent/evidence-gap"
 import { extractJsonFromText } from "@/lib/agent/parse-json"
 import { sanitizeRewriteResult } from "@/lib/agent/keyword-filter"
-import { auditAndFinalizeRewrite } from "@/lib/agent/rewrite-quality"
+import {
+  auditAndFinalizeRewrite,
+  hasProjectSection,
+  originalHasProjectBlock,
+} from "@/lib/agent/rewrite-quality"
 import { parseInterviewResult } from "@/lib/agent/interview-result"
 import {
   PHASE_A_SYSTEM,
@@ -726,6 +730,32 @@ export async function runRewritePipeline(
         : `简历重写失败：${reason}`,
     })
     throw error
+  }
+
+  // 原始简历有项目模块但重写漏掉了：补一次定向修复（最多 1 次，避免无限循环）
+  if (originalHasProjectBlock(resume) && !hasProjectSection(rewrite)) {
+    try {
+      const repairPrompt = [
+        buildPhaseCUserPrompt(jd, JSON.stringify(outline), resumeInput, evidence),
+        "",
+        '【本次修正要求】上一轮输出遗漏了原始简历中的项目经历。请重新输出完整 JSON，并且必须在 resume.sections 中包含 type="projects" 的章节，逐条保留并重写原始简历里的项目（项目名称、个人角色、个人行动、可核实结果）。工作经历中与该项目的重复描述请删除。',
+      ].join("\n")
+
+      const repaired = await streamJsonPhaseWithRetry(
+        "D",
+        PHASE_C_SYSTEM,
+        repairPrompt,
+        emit,
+        (text) => parseRewrite(text, resume, outline, evidence),
+        REWRITE_STREAM_OPTIONS,
+        1,
+      )
+      if (hasProjectSection(repaired)) rewrite = markSource(repaired, "model")
+    } catch (repairError) {
+      console.warn(
+        `phase_D_project_repair_failed: ${repairError instanceof Error ? repairError.message : "unknown"}`,
+      )
+    }
   }
 
   const payload: RewriteResult = { ...rewrite, source: rewrite.source ?? source }

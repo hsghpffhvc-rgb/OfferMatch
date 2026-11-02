@@ -18,8 +18,10 @@ import type { InterviewStatus } from "@/lib/hooks/use-interview-stream"
 import {
   clearWorkspace,
   clearEvidenceInWorkspace,
+  consumeResumePromptSuppression,
   detectIncompleteSession,
   getIncompleteAgentState,
+  getPersistedAgentState,
   getPersistedEvidenceState,
   getPersistedInputs,
   getPersistedInterviewState,
@@ -86,8 +88,17 @@ export function AnalysisWorkspace() {
   // 启动时检测可恢复会话（含已完成分析）
   useEffect(() => {
     const incomplete = detectIncompleteSession()
-    if (!incomplete) {
+    // 从证据详情页返回或已完成会话：直接沿用当前工作区，不再弹确认框
+    const suppressed = consumeResumePromptSuppression()
+    if (!incomplete || suppressed || incomplete.kind === "done") {
+      if (incomplete) {
+        const restored = getPersistedAgentState()
+        if (restored) {
+          setState({ ...restored, status: "done" })
+        }
+      }
       setSessionReady(true)
+      setResumePrompt(null)
       return
     }
 
@@ -131,7 +142,7 @@ export function AnalysisWorkspace() {
       resumePhase: incomplete.resumePhase,
     })
     // 有恢复弹窗时先挡住操作，等用户选择
-    setSessionReady(incomplete.kind !== "done" && incomplete.kind !== "analysis")
+    setSessionReady(incomplete.kind !== "analysis")
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

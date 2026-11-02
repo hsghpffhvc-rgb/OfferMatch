@@ -291,6 +291,27 @@ export function getInterviewProgress(): InterviewProgress {
   return getWorkspace()?.interview.progress ?? { ...emptyInterviewProgress, answers: {} }
 }
 
+/** 返回证据详情页时保留当前工作区，不再弹出“继续上次分析”确认框。 */
+export function suppressResumePromptOnce(): void {
+  if (!canUseBrowserStorage()) return
+  try {
+    sessionStorage.setItem("offer-match:suppress-resume-prompt", "1")
+  } catch {
+    // ignore
+  }
+}
+
+export function consumeResumePromptSuppression(): boolean {
+  if (!canUseBrowserStorage()) return false
+  try {
+    const suppressed = sessionStorage.getItem("offer-match:suppress-resume-prompt") === "1"
+    if (suppressed) sessionStorage.removeItem("offer-match:suppress-resume-prompt")
+    return suppressed
+  } catch {
+    return false
+  }
+}
+
 export function clearWorkspace(): void {
   memory = null
   if (canUseBrowserStorage()) {

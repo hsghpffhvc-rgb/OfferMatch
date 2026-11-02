@@ -5,6 +5,7 @@ import type {
   StructuredResumeHighlight,
   StructuredResumeItem,
   StructuredResumeSection,
+  StructuredResumeSkill,
   VerificationIssue,
 } from "@/lib/agent/types"
 
@@ -156,6 +157,72 @@ function highlightText(highlight: StructuredResumeHighlight): string {
     .join("，")
 }
 
+const SECTION_TYPE_ALIASES: Record<string, string> = {
+  project: "projects",
+  projects: "projects",
+  work: "experience",
+  works: "experience",
+  employment: "experience",
+  job: "experience",
+  edu: "education",
+  school: "education",
+  award: "awards",
+  honor: "awards",
+  honours: "awards",
+  certificate: "certifications",
+  language: "languages",
+}
+
+const SECTION_TITLE_BY_TYPE: Record<string, string> = {
+  experience: "工作经历",
+  projects: "项目经历",
+  education: "教育背景",
+  awards: "荣誉奖项",
+  languages: "语言能力",
+  certifications: "证书",
+}
+
+/**
+ * 归一化章节类型与标题。
+ * 模型常把项目写成 type:"project"（单数）或把项目标题塞进 experience，
+ * 后者会让 PDF 的 VALID_SECTION_TYPES 直接丢弃整段内容。
+ */
+function normalizeSectionMeta(section: StructuredResumeSection): { type: string; title: string } {
+  const rawType = normalizeSpace(section.type ?? "").toLowerCase()
+  const title = normalizeSpace(section.title ?? "")
+  let type = SECTION_TYPE_ALIASES[rawType] ?? rawType
+
+  if (!type || type === "experience") {
+    if (/项目/.test(title)) type = "projects"
+    else if (/教育|学历/.test(title)) type = "education"
+    else if (/荣誉|奖项/.test(title)) type = "awards"
+    else if (/语言/.test(title)) type = "languages"
+    else if (/证书|认证/.test(title)) type = "certifications"
+    else if (!type) type = "experience"
+  }
+
+  const canonical = SECTION_TITLE_BY_TYPE[type]
+  const titleMatchesType =
+    type === "experience"
+      ? /工作|任职|实习|就业/.test(title)
+      : type === "projects"
+        ? /项目/.test(title)
+        : type === "education"
+          ? /教育|学历/.test(title)
+          : type === "awards"
+            ? /荣誉|奖项/.test(title)
+            : type === "languages"
+              ? /语言/.test(title)
+              : type === "certifications"
+                ? /证书|认证/.test(title)
+                : Boolean(title)
+
+  // 章节标题应是模块名（如"项目经历"）：标题不像模块名时一律用标准标题，
+  // 否则 Markdown/PDF 会失去模块层级（例如出现 "## 校园知识问答系统"）
+  if (canonical && !titleMatchesType) return { type, title: canonical }
+  return { type, title: title || canonical || "经历" }
+}
+
 function itemContentFingerprint(item: StructuredResumeItem): string {
   const parts = [
     normalizeSpace(item.role ?? item.name ?? item.title ?? ""),
@@ -164,6 +231,47 @@ function itemContentFingerprint(item: StructuredResumeItem): string {
     ...(item.highlights ?? []).map((highlight) => highlightText(highlight)),
   ]
   return parts.filter(Boolean).join("|").replace(/\s+/g, "")
+}
+
+/** 技能维度不能用一级标题名，否则会出现"专业技能 > 专业技能" */
+const GENERIC_SKILL_GROUPS = /^(专业技能|技能|技术技能|核心技能|其他技能)$/
+
+function normalizeSkillGroupName(value: string): string {
+  const name = normalizeSpace(value)
+  if (!name || hasInternalMarker(name) || GENERIC_SKILL_GROUPS.test(name)) return ""
+  return name
+}
+
+/**
+ * 拆分 "产品能力：用户研究、PRD 撰写" 这类复合技能名：
+ * 冒号前是能力维度，冒号后按顿号/逗号拆成独立技能。
+ */
+function splitCompositeSkillName(
+  rawName: string,
+  groupName: string,
+  category?: string,
+): { dimension: string; names: string[] } {
+  const cleaned = rawName
+    .replace(/^(熟练|精通|掌握|熟悉|了解|使用)\s*/, "")
+    .replace(/[，,、;；]+$/, "")
+    .trim()
+
+  const separatorIndex = cleaned.search(/[：:]/)
+  let dimension = normalizeSkillGroupName(groupName) || normalizeSkillGroupName(category ?? "")
+  let payload = cleaned
+
+  if (separatorIndex > 0) {
+    const head = normalizeSkillGroupName(cleaned.slice(0, separatorIndex))
+    if (head) dimension = head
+    payload = cleaned.slice(separatorIndex + 1)
+  }
+
+  const names = payload
+    .split(/[、，,;；/|]+/)
+    .map((item) => normalizeSpace(item).replace(/^(使用|熟练使用)\s*/, ""))
+    .filter((item) => item.length > 0 && item.length <= 30)
+
+  return { dimension, names: names.length ? names : [cleaned] }
 }
 
 function isSkillAdvice(name: string): boolean {
@@ -196,7 +304,15 @@ function normalizeResume(resume: StructuredResume): { resume: StructuredResume; 
   const seenHighlights = new Set<string>()
   const sections: StructuredResumeSection[] = []
 
-  for (const section of resume.sections ?? []) {
+  // 去重优先级：项目经历先处理，重复内容优先保留在项目块而不是工作经历块
+  const SECTION_PRIORITY = ["projects", "experience", "education", "awards", "languages", "certifications"]
+  const orderedSections = [...(resume.sections ?? [])].sort((a, b) => {
+    const ai = SECTION_PRIORITY.indexOf(a?.type ?? "")
+    const bi = SECTION_PRIORITY.indexOf(b?.type ?? "")
+    return (ai < 0 ? SECTION_PRIORITY.length : ai) - (bi < 0 ? SECTION_PRIORITY.length : bi)
+  })
+
+  for (const section of orderedSections) {
     if (!section || !Array.isArray(section.items)) continue
 
     const title = normalizeSpace(section.title)
@@ -204,6 +320,7 @@ function normalizeResume(resume: StructuredResume): { resume: StructuredResume; 
       report.internalMarkers += 1
       continue
     }
+    const meta = normalizeSectionMeta(section)
 
     const items: StructuredResumeItem[] = []
     for (const item of section.items) {
@@ -237,33 +354,71 @@ function normalizeResume(resume: StructuredResume): { resume: StructuredResume; 
     }
 
     if (!items.length) continue
-    if (sections.some((existing) => existing.type === section.type && existing.title === title)) continue
-    sections.push({ ...section, title: title || "经历", items })
+
+    // 同类型章节合并（例如工作经历被拆成两块），避免重复标题
+    const existing = sections.find((entry) => entry.type === meta.type)
+    if (existing) {
+      existing.items.push(...items)
+      continue
+    }
+
+    sections.push({ ...section, type: meta.type, title: meta.title, items })
   }
 
   const seenSkills = new Set<string>()
-  const skills = (resume.skills ?? []).flatMap((group) => {
-    const items = (group.items ?? []).filter((skill) => {
-      const name = normalizeSpace(skill?.name ?? "")
-      if (isSkillAdvice(name)) {
+  const skillGroups: Array<{ group: string; items: StructuredResumeSkill[] }> = []
+
+  const addSkill = (dimension: string, rawName: string, template: StructuredResumeSkill) => {
+    const name = normalizeSpace(rawName)
+      .replace(/^(使用|熟练使用|精通|熟练掌握|熟练|掌握|熟悉|了解|擅长)\s*/, "")
+      .replace(/[，,、;；]+$/, "")
+      .trim()
+    if (!name || isSkillAdvice(name)) {
+      report.droppedSkills += 1
+      return
+    }
+    const key = name.toLowerCase()
+    if (seenSkills.has(key)) {
+      report.duplicatedLines += 1
+      return
+    }
+    seenSkills.add(key)
+
+    const groupName = normalizeSkillGroupName(dimension)
+    const target = skillGroups.find((entry) => entry.group === groupName)
+    const next: StructuredResumeSkill = { ...template, name }
+    if (target) target.items.push(next)
+    else skillGroups.push({ group: groupName, items: [next] })
+  }
+
+  for (const group of resume.skills ?? []) {
+    const groupDimension = normalizeSkillGroupName(group.group)
+    for (const skill of group.items ?? []) {
+      const rawName = normalizeSpace(skill?.name ?? "")
+      if (!rawName) {
         report.droppedSkills += 1
-        return false
+        continue
       }
-      const key = name.toLowerCase()
-      if (seenSkills.has(key)) {
-        report.duplicatedLines += 1
-        return false
+
+      // 模型常把整个分组塞进一个 name："产品能力：用户研究、PRD 撰写"
+      const segments = parseSkillSegments(rawName)
+      const isStructured = segments.length > 1
+        || (segments.length === 1 && Boolean(segments[0].dimension))
+        || /[、，,;；]/.test(rawName)
+
+      if (isStructured) {
+        for (const segment of segments) {
+          const dimension = segment.dimension || groupDimension || skill?.category || ""
+          for (const item of segment.items) addSkill(dimension, item, skill)
+        }
+        continue
       }
-      seenSkills.add(key)
-      return true
-    })
-    if (!items.length) return []
-    const groupName = normalizeSpace(group.group)
-    return [{
-      group: hasInternalMarker(groupName) ? "专业技能" : groupName || "专业技能",
-      items,
-    }]
-  })
+
+      addSkill(groupDimension || skill?.category || "", rawName, skill)
+    }
+  }
+
+  const skills = skillGroups.filter((group) => group.items.length > 0)
 
   return {
     resume: {
@@ -310,10 +465,19 @@ export function renderResumeMarkdown(resume: StructuredResume): string {
     lines.push("", "## 个人总结", summaryText)
   }
 
-  for (const section of resume.sections ?? []) {
+  const RENDER_ORDER = ["experience", "projects", "education", "awards", "languages", "certifications"]
+  const renderSections = [...(resume.sections ?? [])].sort((a, b) => {
+    const ai = RENDER_ORDER.indexOf(a?.type ?? "")
+    const bi = RENDER_ORDER.indexOf(b?.type ?? "")
+    return (ai < 0 ? RENDER_ORDER.length : ai) - (bi < 0 ? RENDER_ORDER.length : bi)
+  })
+
+  for (const section of renderSections) {
     const items = (section.items ?? []).filter(
       (item) =>
         normalizeSpace(item.role ?? item.name ?? item.title ?? "") ||
+        normalizeSpace(item.school ?? "") ||
+        normalizeSpace(item.degree ?? item.major ?? "") ||
         normalizeSpace(item.summary ?? item.notes ?? "") ||
         (item.highlights ?? []).length,
     )
@@ -322,7 +486,21 @@ export function renderResumeMarkdown(resume: StructuredResume): string {
     lines.push("", `## ${normalizeSpace(section.title) || "经历"}`)
 
     for (const item of items) {
-      const heading = [item.role ?? item.name ?? item.title, item.company ?? item.subtitle ?? item.school]
+      // 项目：项目名称 · 个人角色；教育：学校 · 专业/学位；工作：岗位 · 单位
+      const isProject = section.type === "projects"
+      const isEducation = section.type === "education"
+      const primary = isProject
+        ? item.name ?? item.title ?? item.role
+        : isEducation
+          ? item.school ?? item.name ?? item.title
+          : item.role ?? item.title ?? item.name
+      const secondary = isProject
+        ? (item.role && item.role !== primary ? item.role : item.company ?? item.subtitle)
+        : isEducation
+          ? item.degree ?? item.major ?? item.subtitle
+          : item.company ?? item.subtitle ?? item.school
+
+      const heading = [primary, secondary]
         .map((value) => normalizeSpace(value ?? ""))
         .filter(Boolean)
         .join(" · ")
@@ -346,15 +524,18 @@ export function renderResumeMarkdown(resume: StructuredResume): string {
 
   const skillGroups = (resume.skills ?? [])
     .map((group) => ({
-      group: normalizeSpace(group.group) || "专业技能",
+      group: normalizeSpace(group.group),
       items: (group.items ?? []).map((skill) => normalizeSpace(skill?.name ?? "")).filter(Boolean),
     }))
     .filter((group) => group.items.length)
 
   if (skillGroups.length) {
     lines.push("", "## 专业技能")
+    const hasNamedGroups = skillGroups.some((group) => group.group)
     for (const group of skillGroups) {
-      lines.push(`- **${group.group}**：${group.items.join("、")}`)
+      // 只有一个无维度名的分组时直接平铺，避免出现"专业技能：专业技能"
+      const label = group.group || (hasNamedGroups && skillGroups.length > 1 ? "通用能力" : "")
+      lines.push(label ? `- **${label}**：${group.items.join("、")}` : `- ${group.items.join("、")}`)
     }
   }
 
@@ -377,7 +558,11 @@ const IDIOM_PATTERN = /从\s*0\s*(?:到|→|-|~)\s*1|0\s*(?:到|→|-|~)\s*1|零
 
 function extractNumbers(text: string): string[] {
   // "从 0 到 1" 是固定搭配，不是数据
-  const cleaned = text.replace(IDIOM_PATTERN, " ")
+  const cleaned = text
+    .replace(IDIOM_PATTERN, " ")
+    // 日期（2024.04 / 2024-04 / 2024/04 / 2024年4月）不是可核对的数据指标
+    .replace(/\d{4}\s*[.\-/年]\s*\d{1,2}\s*月?/g, " ")
+    .replace(/\d{4}\s*[.\-/]\s*[0-1]?\d/g, " ")
   const matches = cleaned.match(/\d+(?:\.\d+)?%?/g) ?? []
   return matches.filter((item) => !YEAR_LIKE.test(item))
 }
@@ -434,8 +619,53 @@ function keywordHits(keyword: string, body: string): boolean {
   })
 }
 
-/** 原始简历里的技能块，用于完整性兜底（只取名称，去掉"精通/熟练"等自评） */
-function extractSourceSkills(originalResume: string): string[] {
+/**
+ * 解析一段技能文本为「能力维度 → 技能项」。
+ * 支持 "产品能力：用户研究、PRD 撰写 技术能力：RAG" 这类混排写法。
+ */
+function parseSkillSegments(rawText: string): Array<{ dimension: string; items: string[] }> {
+  const text = rawText
+    .replace(/\r/g, "")
+    .replace(/[\n；;]+/g, " 、 ")
+    .replace(/\s*[：:]\s*/g, "：")
+
+  const groups: Array<{ dimension: string; items: string[] }> = []
+  const push = (dimension: string, body: string) => {
+    const items = body
+      .split(/[、，,;；/|]+/)
+      .map((item) => item.replace(/^(精通|熟练掌握|熟练|掌握|熟悉|了解|擅长|使用)\s*/, "").trim())
+      .filter((item) => item.length > 0 && item.length <= 24)
+    if (!items.length) return
+    const cleanDimension = normalizeSkillGroupName(dimension)
+    if (cleanDimension) {
+      const existing = groups.find((group) => group.dimension === cleanDimension)
+      if (existing) existing.items.push(...items)
+      else groups.push({ dimension: cleanDimension, items })
+      return
+    }
+    const target = groups.find((group) => group.dimension === "")
+    if (target) target.items.push(...items)
+    else groups.push({ dimension: "", items })
+  }
+
+  // 逐个识别 "维度：" 标签，标签之间就是该维度下的技能项
+  const labelPattern = /([\u4e00-\u9fa5]{2,8})\s*：/g
+  let cursor = 0
+  let dimension = ""
+  let match: RegExpExecArray | null
+
+  while ((match = labelPattern.exec(text)) !== null) {
+    push(dimension, text.slice(cursor, match.index))
+    dimension = match[1]
+    cursor = match.index + match[0].length
+  }
+  push(dimension, text.slice(cursor))
+
+  return groups.map((group) => ({ ...group, items: [...new Set(group.items)] }))
+}
+
+/** 原始简历里的技能块，用于完整性兜底（分组保留，只取名称） */
+function extractSourceSkills(originalResume: string): Array<{ dimension: string; items: string[] }> {
   const lines = originalResume.split("\n")
   const startIndex = lines.findIndex((line) => /^(专业技能|技能|技术栈|技能清单)/.test(line.trim()))
   if (startIndex < 0) return []
@@ -451,14 +681,139 @@ function extractSourceSkills(originalResume: string): string[] {
     block.push(trimmed)
   }
 
-  const tokens = block
-    .join(" ")
-    .replace(/^(专业技能|技能|技术栈|技能清单)[:：]?/, "")
-    .split(/[、，,;；/|]+/)
-    .map((token) => token.replace(/^(精通|熟练掌握|熟练|掌握|熟悉|了解|擅长)\s*/, "").trim())
-    .filter((token) => token.length > 1 && token.length <= 20)
+  const groups = parseSkillSegments(
+    block.join("\n").replace(/^(专业技能|技能|技术栈|技能清单)[:：]?/, ""),
+  )
 
-  return [...new Set(tokens)].slice(0, 12)
+  return groups
+    .map((group) => ({ ...group, items: group.items.slice(0, 8) }))
+    .filter((group) => group.items.length > 0)
+    .slice(0, 4)
+}
+
+/* ------------------------------------------------------------------ */
+/* 原文兜底解析：模型漏掉模块时，用原始简历原文补齐（不改写事实）        */
+/* ------------------------------------------------------------------ */
+
+const SECTION_HEADING_RE =
+  /^(工作经历|工作经验|项目经历|项目经验|核心项目|代表项目|主要项目|项目实践|教育背景|教育经历|专业技能|技能|荣誉奖项|获奖情况|自我评价|证书|语言能力)\s*[：:]?$/
+
+const BULLET_RE = /^[-•*·●○◦▪\u2022]\s*/
+const DATE_IN_LINE = /(\d{4}\s*[.\-/年]\s*\d{1,2}\s*月?)\s*[-–—~至]\s*(\d{4}\s*[.\-/年]\s*\d{1,2}\s*月?|至今|今)/
+
+/** 取出原文某个章节的正文行（不带章节标题本身） */
+function extractBlockLines(originalResume: string, headings: RegExp): string[] {
+  const lines = originalResume.split("\n")
+  const start = lines.findIndex((line) => headings.test(line.trim()))
+  if (start < 0) return []
+
+  const block: string[] = []
+  for (const line of lines.slice(start + 1)) {
+    if (SECTION_HEADING_RE.test(line.trim())) break
+    block.push(line)
+  }
+  return block
+}
+
+export interface ParsedOriginalItem {
+  name: string
+  role: string
+  date: { start?: string; end?: string }
+  description: string
+  bullets: string[]
+}
+
+/** 从原文项目块粗解析条目；解析不出来就退化为整块一条 */
+export function parseOriginalProjectItems(originalResume: string): ParsedOriginalItem[] {
+  const lines = extractBlockLines(originalResume, /^(项目经历|项目经验|核心项目|代表项目|主要项目|项目实践)\s*[：:]?$/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+  if (!lines.length) return []
+
+  const items: ParsedOriginalItem[] = []
+  let current: ParsedOriginalItem | null = null
+
+  const flush = () => {
+    if (current && (current.name || current.bullets.length || current.description)) items.push(current)
+    current = null
+  }
+
+  for (const line of lines) {
+    const isBullet = BULLET_RE.test(line)
+    const text = line.replace(BULLET_RE, "").trim()
+    if (!text) continue
+
+    if (isBullet) {
+      if (!current) {
+        current = { name: "", role: "", date: {}, description: "", bullets: [] }
+      }
+      current.bullets.push(text)
+      continue
+    }
+
+    // 非 bullet 行：形如 "项目名（角色） 2024.04 - 2025.12" 或 "项目名（2024.04 - 2025.12，项目负责人）"
+    const parenGroups = [...text.matchAll(/[（(]([^（()）]{1,40})[）)]/g)].map((match) => match[1])
+    const dateSource = text.match(DATE_IN_LINE) ?? parenGroups.join(" ").match(DATE_IN_LINE)
+    const roleFromParens = parenGroups
+      .map((group) => group.replace(DATE_IN_LINE, "").replace(/[，,、\s]+/g, " ").trim())
+      .find((group) => group.length > 0 && group.length <= 20) ?? ""
+
+    const head = text
+      .replace(/[（(][^（()）]{1,40}[）)]/g, " ")
+      .replace(DATE_IN_LINE, " ")
+      .replace(/[，,、\-–—\s]+$/g, "")
+      .trim()
+    const looksLikeTitle = Boolean(dateSource) || Boolean(roleFromParens) || head.length <= 40
+
+    if (looksLikeTitle && (current === null || current.bullets.length > 0)) {
+      flush()
+      current = {
+        name: head || text,
+        role: roleFromParens,
+        date: dateSource ? { start: dateSource[1].trim(), end: dateSource[2].trim() } : {},
+        description: "",
+        bullets: [],
+      }
+      continue
+    }
+
+    if (!current) {
+      current = { name: head.slice(0, 40), role: "", date: {}, description: text, bullets: [] }
+    } else if (!current.description) {
+      current.description = text
+    } else {
+      current.bullets.push(text)
+    }
+  }
+
+  flush()
+  return items.slice(0, 6)
+}
+
+/** 从原文教育块粗解析出一个教育条目 */
+export function parseOriginalEducationItems(originalResume: string): ParsedOriginalItem[] {
+  const lines = extractBlockLines(originalResume, /^(教育背景|教育经历)\s*[：:]?$/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+  if (!lines.length) return []
+
+  const text = lines.join(" ")
+  const dateMatch = text.match(DATE_IN_LINE)
+  const head = lines[0]
+    .replace(BULLET_RE, "")
+    .replace(DATE_IN_LINE, " ")
+    .replace(/[，,]+/g, " ")
+    .trim()
+  const parts = head.split(/\s{2,}|\t+/).map((part) => part.trim()).filter(Boolean)
+  const name = parts[0] ?? head.slice(0, 60)
+
+  return [{
+    name,
+    role: "",
+    date: dateMatch ? { start: dateMatch[1].trim(), end: dateMatch[2].trim() } : {},
+    description: [parts.slice(1).join(" · "), lines.slice(1).join(" ")].filter(Boolean).join(" · ").slice(0, 200),
+    bullets: [],
+  }]
 }
 
 export interface AuditContext {
@@ -488,30 +843,85 @@ export function auditAndFinalizeRewrite(
 
   // 完整性兜底：原始简历有技能块但输出没写，按原文补回技能名称（去掉自评词）
   if ((resume.skills ?? []).length === 0) {
-    const sourceSkills = extractSourceSkills(context.originalResume)
-    if (sourceSkills.length > 0) {
-      resume.skills = [{
-        group: "专业技能",
-        items: sourceSkills.map((name) => ({ name, category: "", level: "", evidence: "原始简历" })),
-      }]
+    const sourceSkillGroups = extractSourceSkills(context.originalResume)
+    const sourceSkillCount = sourceSkillGroups.reduce((total, group) => total + group.items.length, 0)
+    if (sourceSkillCount > 0) {
+      resume.skills = sourceSkillGroups.map((group) => ({
+        group: group.dimension,
+        items: group.items.map((name) => ({ name, category: "", level: "", evidence: "原始简历" })),
+      }))
       issues.push({
         code: "MISSING_SECTION",
-        message: `原始简历含技能信息但未输出，已按原文补回 ${sourceSkills.length} 项技能名称`,
+        message: `原始简历含技能信息但未输出，已按原文补回 ${sourceSkillCount} 项技能（按原维度分组）`,
         severity: "warning",
         autoFixed: true,
       })
     }
   }
 
-  // 完整性提示：原文有教育经历但正文缺失，只提示，不猜测内容
+  // 完整性兜底：原文有教育经历但模型漏掉了 → 按原文补齐（不改写）
   const hasEducationSection = (resume.sections ?? []).some((section) => section.type === "education")
-  if (!hasEducationSection && /教育背景|教育经历|本科|硕士|博士|大学|学院/.test(context.originalResume)) {
-    issues.push({
-      code: "MISSING_SECTION",
-      message: "原始简历含教育经历，但正文未包含教育背景模块，请确认是否需要补充",
-      severity: "warning",
-      autoFixed: false,
-    })
+  if (!hasEducationSection && /教育背景|教育经历/.test(context.originalResume)) {
+    const parsedEducation = parseOriginalEducationItems(context.originalResume)
+    if (parsedEducation.length > 0 && parsedEducation[0].name) {
+      resume.sections.push({
+        type: "education",
+        title: "教育背景",
+        items: parsedEducation.map((item, index) => ({
+          school: item.name,
+          date: item.date,
+          notes: item.description,
+          order: index + 1,
+        })),
+      })
+      issues.push({
+        code: "MISSING_SECTION",
+        message: "模型未保留教育背景，已按原始简历补齐（原文保留，请核对）",
+        severity: "warning",
+        autoFixed: true,
+      })
+    } else {
+      issues.push({
+        code: "MISSING_SECTION",
+        message: "原始简历含教育经历，但正文未包含教育背景模块，请确认是否需要补充",
+        severity: "warning",
+        autoFixed: false,
+      })
+    }
+  }
+
+  // 完整性兜底：原文有项目经历但模型漏掉了 → 用原文条目补齐（只保留事实，不做改写）
+  const hasProjectsSection = (resume.sections ?? []).some((section) => section.type === "projects")
+  if (!hasProjectsSection && originalHasProjectBlock(context.originalResume)) {
+    const parsedProjects = parseOriginalProjectItems(context.originalResume)
+    if (parsedProjects.length > 0) {
+      resume.sections.push({
+        type: "projects",
+        title: "项目经历",
+        items: parsedProjects.map((item, index) => ({
+          name: item.name,
+          role: item.role,
+          date: item.date,
+          summary: item.description,
+          highlights: item.bullets.map((bullet) => ({ action: bullet, metric: "", result: "" })),
+          order: index + 1,
+          notes: "以下内容按原始简历保留，未做重写，请核对后再投递",
+        })),
+      })
+      issues.push({
+        code: "MISSING_SECTION",
+        message: `模型未保留项目经历，已按原始简历补齐 ${parsedProjects.length} 个项目（原文保留，未做改写）`,
+        severity: "warning",
+        autoFixed: true,
+      })
+    } else {
+      issues.push({
+        code: "MISSING_SECTION",
+        message: "原始简历含项目经历，但正文未保留项目模块，请重新生成以保留与岗位相关的项目",
+        severity: "warning",
+        autoFixed: false,
+      })
+    }
   }
 
   if (report.summaryPolluted) {
@@ -684,6 +1094,16 @@ export function auditAndFinalizeRewrite(
     markdown,
     issues,
   }
+}
+
+/** 原始简历是否包含项目模块（用于判断重写是否漏项） */
+export function originalHasProjectBlock(originalResume: string): boolean {
+  return /(^|\n)\s*(项目经历|项目经验|核心项目|代表项目|主要项目|项目实践)/.test(originalResume)
+}
+
+/** 重写结果里是否有可渲染的项目模块 */
+export function hasProjectSection(rewrite: RewriteResult | null | undefined): boolean {
+  return Boolean(rewrite?.resume?.sections?.some((section) => section.type === "projects"))
 }
 
 /** 供 UI 判断是否可以直接投递 */

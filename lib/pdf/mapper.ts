@@ -16,16 +16,28 @@ export interface MapRewriteOptions {
   basics?: Partial<ResumeBasics>
 }
 
-const VALID_SECTION_TYPES = new Set<SectionType>([
-  "summary",
-  "experience",
-  "education",
-  "skills",
-  "projects",
-  "languages",
-  "certifications",
-  "awards",
-])
+const SECTION_TYPE_ALIASES: Record<string, SectionType> = {
+  summary: "summary",
+  profile: "summary",
+  experience: "experience",
+  work: "experience",
+  employment: "experience",
+  project: "projects",
+  projects: "projects",
+  education: "education",
+  edu: "education",
+  school: "education",
+  skills: "skills",
+  skill: "skills",
+  languages: "languages",
+  language: "languages",
+  certifications: "certifications",
+  certification: "certifications",
+  awards: "awards",
+  award: "awards",
+}
+
+const VALID_SECTION_TYPES = new Set<SectionType>(Object.values(SECTION_TYPE_ALIASES))
 
 function cleanText(value: unknown, maxLength = 1000): string {
   if (typeof value !== "string") return ""
@@ -85,6 +97,21 @@ function mapStructuredItem(type: SectionType, item: StructuredResumeItem): Resum
 
   if (type === "languages") {
     return { title: cleanText(item.name || item.title, 80), subtitle: cleanText(item.level, 80) }
+  }
+
+  if (type === "projects") {
+    const primary = cleanText(item.name || item.title || item.role, 120)
+    const secondary = item.role && item.role !== primary
+      ? cleanText(item.role, 80)
+      : cleanText(item.subtitle || item.company, 120)
+    return {
+      title: primary,
+      subtitle: secondary,
+      location: cleanText(item.location, 80),
+      date: formatDate(item.date),
+      description: cleanText(item.summary || item.notes),
+      highlights,
+    }
   }
 
   return {
@@ -185,7 +212,8 @@ export function mapRewriteResultToResumeData(
   const skills = structured.skills.flatMap((group) =>
     (Array.isArray(group.items) ? group.items : []).map((skill) => ({
       title: cleanText(skill.name, 80),
-      subtitle: cleanText(group.group || skill.category, 80),
+      // 只用能力维度名做副标题；不再回退到 category，避免出现"技术框架"这类零碎小标题
+      subtitle: cleanText(group.group, 80),
     })),
   ).filter((skill) => Boolean(skill.title))
   if (skills.length > 0) {

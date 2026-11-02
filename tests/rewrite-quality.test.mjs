@@ -302,3 +302,162 @@ test("正文渲染顺序与结构", () => {
   assert.ok(order.every((index) => index >= 0))
   assert.deepEqual([...order].sort((a, b) => a - b), order)
 })
+
+/* 13. 项目经历必须被保留为独立章节，且不被工作经历吃掉 */
+test("场景13：项目经历保留为 projects 章节且不与工作经历重复", () => {
+  const rewrite = makeRewrite({
+    resume: {
+      ...makeRewrite().resume,
+      sections: [
+        {
+          type: "experience",
+          title: "工作经历",
+          items: [{ role: "产品负责人", company: "某高校", summary: "负责知识问答产品", highlights: [] }],
+        },
+        {
+          type: "project", // 模型常见的单数写法
+          title: "校园知识问答系统",
+          items: [
+            {
+              role: "校园知识问答系统",
+              summary: "基于 RAG 搭建校园知识库",
+              highlights: [{ action: "设计 RAG 双路召回", metric: "覆盖 12 个院系", result: "" }],
+            },
+          ],
+        },
+      ],
+    },
+  })
+
+  const result = run(rewrite, { originalResume: "项目经历\n校园知识问答系统：基于 RAG 搭建" })
+  const types = result.rewrite.resume.sections.map((section) => section.type)
+  assert.ok(types.includes("projects"), "应包含 projects 章节")
+  assert.ok(result.markdown.includes("## 项目经历"))
+  // 工作经历在前、项目经历在后
+  assert.ok(result.markdown.indexOf("## 工作经历") < result.markdown.indexOf("## 项目经历"))
+})
+
+/* 14. 专业技能不重复大标题，按能力维度分组 */
+test("场景14：技能按能力维度分组且不重复“专业技能”", () => {
+  const rewrite = makeRewrite({
+    resume: {
+      ...makeRewrite().resume,
+      skills: [
+        {
+          group: "专业技能", // 与一级标题同名
+          items: [
+            { name: "产品能力：用户研究、PRD 撰写、验收测试", category: "", level: "", evidence: "原文" },
+          ],
+        },
+        {
+          group: "技术能力",
+          items: [{ name: "RAG", category: "", level: "", evidence: "项目经历" }],
+        },
+      ],
+    },
+  })
+
+  const result = run(rewrite, { originalResume: "专业技能\n用户研究、PRD 撰写、RAG" })
+  const headingCount = result.markdown.split("## 专业技能").length - 1
+  assert.equal(headingCount, 1, "“专业技能”应只作为一级标题出现一次")
+  assert.equal(result.markdown.includes("**专业技能**"), false, "不应出现重复的专业技能小标题")
+  assert.ok(result.markdown.includes("用户研究"))
+  assert.ok(result.markdown.includes("PRD 撰写"))
+  assert.ok(result.markdown.includes("**技术能力**"))
+})
+
+/* 15. 日期不应被当成无来源数字 */
+test("场景15：任职日期不会被误判为无来源数字", () => {
+  const rewrite = makeRewrite({
+    resume: {
+      ...makeRewrite().resume,
+      sections: [
+        {
+          type: "experience",
+          title: "工作经历",
+          items: [{ role: "产品经理", company: "某公司", date: { start: "2024.04", end: "2026.09" }, summary: "负责知识库", highlights: [] }],
+        },
+      ],
+    },
+  })
+  const result = run(rewrite, { originalResume: "某公司 产品经理 2024.04 - 2026.09" })
+  assert.equal(
+    result.issues.some((issue) => issue.code === "UNSOURCED_NUMBER" && issue.message.includes("2024")),
+    false,
+  )
+})
+
+/* 16. 原始简历有项目但输出没有：产生可操作提示 */
+test("场景16：原始简历含项目模块但输出缺失时给出提示", () => {
+  const rewrite = makeRewrite({
+    resume: {
+      ...makeRewrite().resume,
+      sections: [
+        { type: "experience", title: "工作经历", items: [{ role: "产品经理", company: "某公司", summary: "负责知识库", highlights: [] }] },
+      ],
+    },
+  })
+  const result = run(rewrite, { originalResume: "工作经历\n某公司\n\n项目经历\n校园问答系统" })
+  assert.ok(
+    result.issues.some(
+      (issue) => issue.code === "MISSING_SECTION" && issue.message.includes("项目经历"),
+    ),
+  )
+})
+
+/* 17. 模型完全漏掉项目：按原文补齐，保留项目名、角色与时间 */
+test("场景17：模型漏掉项目时按原始简历补齐", () => {
+  const rewrite = makeRewrite({
+    resume: {
+      ...makeRewrite().resume,
+      sections: [
+        { type: "experience", title: "工作经历", items: [{ role: "AI产品负责人", company: "某高校", summary: "负责知识问答", highlights: [] }] },
+      ],
+      skills: [],
+    },
+  })
+
+  const original = [
+    "工作经历",
+    "2024.04 - 2026.09  某高校  AI产品负责人",
+    "- 负责知识问答系统规划",
+    "",
+    "项目经历",
+    "校园知识问答系统（2024.04 - 2025.12，项目负责人）",
+    "- 设计 RAG 双路召回，召回率由 0.68 提升至 0.88",
+    "",
+    "教育背景",
+    "2018.09 - 2023.06  某大学  信息管理  本科",
+  ].join("\n")
+
+  const result = run(rewrite, { originalResume: original })
+  assert.ok(result.markdown.includes("## 项目经历"))
+  assert.ok(result.markdown.includes("校园知识问答系统 · 项目负责人"))
+  assert.ok(result.markdown.includes("0.68"))
+  assert.ok(result.markdown.includes("## 教育背景"))
+  assert.ok(result.markdown.includes("某大学"))
+  assert.ok(result.issues.some((issue) => issue.code === "MISSING_SECTION" && issue.autoFixed))
+})
+
+/* 18. 复合技能名按维度拆分 */
+test("场景18：复合技能串按能力维度拆分", () => {
+  const rewrite = makeRewrite({
+    resume: {
+      ...makeRewrite().resume,
+      skills: [
+        {
+          group: "专业技能",
+          items: [
+            { name: "产品能力：用户研究、PRD 撰写 技术能力：RAG、Prompt Engineering 工具：Figma、Cursor", category: "", level: "", evidence: "" },
+          ],
+        },
+      ],
+    },
+  })
+
+  const result = run(rewrite, { originalResume: "专业技能\n产品能力：用户研究、PRD 撰写" })
+  const groups = result.rewrite.resume.skills
+  assert.deepEqual(groups.map((group) => group.group), ["产品能力", "技术能力", "工具"])
+  assert.ok(result.markdown.includes("- **技术能力**：RAG、Prompt Engineering"))
+  assert.equal(result.markdown.split("## 专业技能").length - 1, 1)
+})
