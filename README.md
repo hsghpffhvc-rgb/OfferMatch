@@ -124,36 +124,35 @@ Key 获取：https://bailian.console.aliyun.com/
 
 ## API 架构
 
-`POST /api/chat` — 三阶段 Agent 流式分析：
+产品流程分为五个阶段，由四个 SSE 接口协作完成。阶段 C 需要用户参与，阶段 E 由用户主动启动；并非一个接口连续执行全部阶段。
 
-- **阶段 A**：JD 深度解析 → 理想候选人画像
-- **阶段 B**：逆向推导 → 理想简历大纲
-- **阶段 C**：差异化重写 → 匹配度评分 + STAR 简历
+| 产品阶段 | 作用 | 接口 | 触发与输出 |
+| --- | --- | --- | --- |
+| A · 职位要求深度解析 | 解析 JD，同时梳理原始简历，生成候选人画像和结构化快照 | `POST /api/chat` | 开始分析后运行；返回 `persona`，包括 `resumeSnapshot`、`jdBreakdown` 和 `dimensionInsights` |
+| B · 逆向推导理想简历大纲 | 基于阶段 A 和 JD 生成理想大纲及需求映射 | `POST /api/chat` | A 完成后运行；返回 `outline`，包括 `structured` 和 `jdMapping` |
+| C · 简历匹配证据补足 | 针对证据缺口生成追问，用户补充或跳过后提交 | `POST /api/evidence-gap`（`action: "ask"`） | A/B 完成后进入补证；问题与回答用于后续重写 |
+| D · 简历差异化重写 | 结合原文、大纲和补充证据，生成结构化简历、评分与优化分析 | `POST /api/rewrite` | 提交补证后运行；返回 `rewrite`，并执行结构与事实风险检查 |
+| E · 模拟面试题与示范回答 | 根据 JD 和候选人证据生成面试题及示范回答 | `POST /api/interview` | 用户主动启动；返回面试结果 |
 
-可选 `POST /api/interview` — 阶段 D 模拟面试题与示范回答。
+### 接口与数据流
 
-请求体：
-```json
-{ "jd": "岗位描述文本", "resume": "用户简历文本（可选）" }
-```
+1. **A → B：** `POST /api/chat` 接收 `{ "jd": "岗位描述", "resume": "原始简历（可选）" }`。此接口只运行 A、B，`done` 中包含 `persona` 和 `outline`，此时 `rewrite` 为 `null`。
+2. **C：** `POST /api/evidence-gap` 以 `action: "ask"` 接收 `jd`、`persona` 和可选的 `resume`，流式返回证据追问。用户提交回答后，前端将回答整理为证据文本，传给 D；无需先调用 `refine`。
+3. **D：** `POST /api/rewrite` 接收必填的 `jd`、`persona`、`outline`，以及可选的 `resume`、`evidence`、`previousResume`。返回的结构化简历用于正文预览、复制和 PDF 导出。
+4. **E：** `POST /api/interview` 接收 `jd` 和候选人面试证据 `context`，按需生成面试内容。
 
-响应为 SSE 流（`text/event-stream`），事件类型：`phase` | `reasoning`（可选） | `result` | `done` | `error`。A/B/C 阶段默认不推送模型原始 JSON，前端仅展示阶段进度文案。
+`/api/evidence-gap` 还支持独立的 `action: "refine"`：传入 `jd`、`persona`、`rewrite` 和有效 `answers`，生成针对已有重写结果的证据回填建议及受影响维度分。这是接口提供的额外回填能力，不是产品流程中的第六阶段，也不是 C → D 的必经调用。
 
-结构化约束（防止改写后模块混乱）：
+### 流式事件与结构校验
 
-- 阶段 A 同时输入 JD 与原始简历，输出 `resumeSnapshot`（原文模块 / 条目 / 实习身份）与 `jdBreakdown`、`dimensionInsights`，服务端解析后完整透传；
-- 阶段 B 输出 `structured` 大纲（带 `sourceRef`）与 `jdMapping`，不再退回旧的 heading/bullets 兼容结构；
-- 阶段 D 的提示词会收到 `lib/agent/source-sections.ts` 生成的【原始简历结构索引】，明确「实习独立成条、项目不得复述工作经历」；
-- 生成后再做确定性边界校验（`SECTION_BOUNDARY`），发现实习被并入全职岗或项目经历复述工作经历时，触发一次定向修复，仍不合格则标记为待完善草稿。
+各接口成功受理后返回 `text/event-stream`，每条消息以 `data: {JSON}\n\n` 传输。请求参数不合法时返回 JSON 错误；流内错误使用 `error` 事件。
 
-`POST /api/evidence-gap` — 阶段 E / F：JD 缺失证据追问与回填（不影响 `/api/chat` 的既有事件格式）：
+- `/api/chat`：`phase`、`result`、`done`、`error`；A/B 的 `result` 分别提供画像与大纲。
+- `/api/evidence-gap`：`ask` 返回阶段 C 的 `phase` 和 `evidence_gaps`；`refine` 使用内部 `evidence_phase`（F）和 `evidence_refined`。内部 F 是回填事件标识，不对应产品阶段 E。
+- `/api/rewrite`：阶段 D 使用 `phase`、`result`、`error`。
+- `/api/interview`：阶段 E 使用 `phase`、`result`、`interview_done`、`error`。通用事件类型还支持 `reasoning`；各阶段默认不展示模型原始 JSON。
 
-- `action: "ask"`：基于关键词缺口与现有经历生成 3-6 条追问，每条都引用简历原文锚点
-- `action: "refine"`：把用户回答转成结构化 highlight 回填到简历对应条目
-
-新增 SSE 事件：`evidence_phase` | `evidence_gaps` | `evidence_refined`。服务端只返回受影响的维度分，总分由前端 `calculateOverall()` 按 20/20/20/10/10/10/10 权重重算，单轮维度提升封顶 +12。
-
-证据补足详情在主界面以页面内弹窗打开（`components/evidence-detail.tsx`），与 `/evidence` 深链页共用同一份渲染。站内跳转、查看详情与返回都不会打断阶段运行，也不会再弹「继续上次分析」确认框；只有 A/B 阶段真正中断、或面试练习未完成时才询问。
+阶段 D 会参考原始简历结构索引，并执行 `SECTION_BOUNDARY` 等质量检查；遇到结构冲突时尝试定向修复，仍有阻断问题则标记为待完善草稿。证据补足界面位于主界面弹窗，也支持 `/evidence` 深链。
 
 ## 项目结构
 
