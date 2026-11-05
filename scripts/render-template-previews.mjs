@@ -30,11 +30,15 @@ Font.register({
     { src: fs.existsSync(fontBold) ? fontBold : fontRegular, fontWeight: "bold" },
   ],
 })
-Font.registerHyphenationCallback((word) => [word])
-
 const { getTemplate } = await import(
   pathToFileURL(path.join(root, "lib/pdf/templates/index.ts")).href
 )
+const { resumeHyphenationCallback } = await import(
+  pathToFileURL(path.join(root, "lib/pdf/hyphenation.ts")).href
+)
+
+// 与 lib/pdf/fonts.ts 使用同一套 CJK 断行规则
+Font.registerHyphenationCallback(resumeHyphenationCallback)
 const {
   createFullSampleResume,
   createSparseSampleResume,

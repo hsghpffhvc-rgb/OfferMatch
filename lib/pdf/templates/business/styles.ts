@@ -16,7 +16,7 @@ export const businessStyles = StyleSheet.create({
     fontFamily: RESUME_FONT_FAMILY,
     fontSize: 9,
     color: C.ink,
-    paddingTop: 0,
+    paddingTop: 28,
     paddingBottom: 30,
     paddingLeft: 0,
     paddingRight: 0,
@@ -24,6 +24,7 @@ export const businessStyles = StyleSheet.create({
 
   // ---- Header band ----
   headerBand: {
+    marginTop: -28,
     backgroundColor: C.band,
     flexDirection: "row",
     justifyContent: "space-between",
@@ -103,6 +104,7 @@ export const businessStyles = StyleSheet.create({
     fontSize: 9.2,
     lineHeight: 1.4,
     color: C.sub,
+    textAlign: "justify",
   },
 
   // ---- Experience / Projects ----
@@ -131,6 +133,18 @@ export const businessStyles = StyleSheet.create({
     color: C.accent,
     marginTop: 2,
     marginBottom: 2,
+    flex: 1,
+  },
+  // 同一单位内不同岗位：岗位名与岗位时间各占一侧
+  roleTitleRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "baseline",
+  },
+  roleDate: {
+    fontSize: 8.5,
+    color: C.sub,
+    flexShrink: 0,
   },
   dotItem: {
     flexDirection: "row",
@@ -149,11 +163,18 @@ export const businessStyles = StyleSheet.create({
     lineHeight: 1.4,
     color: C.sub,
     flex: 1,
+    textAlign: "justify",
   },
   dotTitle: {
     fontWeight: "bold",
     color: C.ink,
   },
+
+  contextTitle: { fontSize: 10.5, fontWeight: "bold", color: C.ink, flex: 1, paddingRight: 8 },
+  contextSecondary: { fontSize: 9.5, fontWeight: "normal", color: C.sub },
+  // 独立段落必须按内容撑开高度，不复用行内 flex 文本样式。
+  paragraphText: { fontSize: 9.2, lineHeight: 1.4, color: C.sub, textAlign: "justify", flexShrink: 0 },
+  contextDescription: { textAlign: "justify", fontSize: 9.2, lineHeight: 1.4, color: C.sub, marginTop: 2, marginBottom: 2 },
 
   // ---- Two-column (Education + Skills) ----
   twoCol: {

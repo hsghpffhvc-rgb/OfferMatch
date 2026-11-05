@@ -4,6 +4,7 @@ import os from "node:os"
 import path from "node:path"
 import { Font } from "@react-pdf/renderer"
 import { RESUME_FONT_FAMILY } from "@/lib/pdf/font-family"
+import { resumeHyphenationCallback } from "@/lib/pdf/hyphenation"
 
 export { RESUME_FONT_FAMILY }
 
@@ -110,12 +111,7 @@ export function registerResumeFonts(): void {
 
   // CJK 文本没有空格分词。若整段返回，React-PDF 会将其视为不可换行长词并溢出页面。
   // 汉字和标点按字符断行，英文术语与数字保持为完整 token，兼顾中文换行和术语可读性。
-  Font.registerHyphenationCallback(
-    (word) =>
-      word.match(
-        /[\u4e00-\u9fff]|[A-Za-z0-9]+(?:[.+#/-][A-Za-z0-9]+)*|[^\s]/g
-      ) ?? [word]
-  )
+  Font.registerHyphenationCallback(resumeHyphenationCallback)
 
   registered = true
 }

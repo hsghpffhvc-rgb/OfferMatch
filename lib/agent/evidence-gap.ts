@@ -74,7 +74,7 @@ export function buildEvidenceTextFromState(params: {
     const answer = (params.answers[gap.id] ?? "").trim()
     lines.push(`- 追问：${gap.question}（关键词：${gap.keyword}）`)
     if (skipped.includes(gap.id) || !answer) {
-      lines.push("  回答：无相关经历/数据（该缺口请用 XXX 占位，不得编造）")
+      lines.push("  回答：无相关经历/数据（该缺口仅放入分析，不写进简历正文，不得编造）")
     } else {
       lines.push(`  回答：${answer}`)
     }

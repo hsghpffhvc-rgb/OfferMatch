@@ -21,6 +21,7 @@ export type SectionType =
   | "languages"
   | "certifications"
   | "awards"
+  | "other"
 
 export type SectionPlacement = "sidebar" | "main"
 
@@ -30,6 +31,7 @@ export interface ResumeHighlight {
 }
 
 export interface ResumeSectionItem {
+  projectName?: string
   title?: string // 职位/学校/技能名
   subtitle?: string // 公司/专业
   date?: string // 时间范围

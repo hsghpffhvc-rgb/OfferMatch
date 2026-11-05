@@ -14,7 +14,9 @@ export function ResumeAuditCard({ rewrite }: { rewrite?: RewriteResult | null })
 
   if (!verification && requirements.length === 0) return null
 
-  const status = verification?.status ?? "draft"
+  const hasIncompleteBasics = Boolean(rewrite && !rewrite.resume.basics.name?.trim())
+  const hasPlaceholder = /XXX|×××/.test(rewrite?.rewrittenResumeMarkdown ?? "")
+  const status = hasIncompleteBasics || hasPlaceholder ? "draft" : verification?.status ?? "draft"
   const issues = verification?.issues ?? []
 
   return (
@@ -29,12 +31,13 @@ export function ResumeAuditCard({ rewrite }: { rewrite?: RewriteResult | null })
               : "bg-amber-100 text-amber-800",
           )}
         >
-          {status === "ready" ? "可直接投递" : "待完善草稿"}
+          {status === "ready" ? "基础检查通过" : "待完善草稿"}
         </span>
       </div>
       <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-        这里只展示分析与缺口，不会进入简历正文、复制或导出内容。
+        基础检查不能覆盖所有结构和事实问题，请对照原简历核对。这里的分析与缺口不会进入简历正文、复制或导出内容。
       </p>
+      {hasPlaceholder ? <p className="mt-2 text-xs text-destructive">简历正文仍有 XXX 占位，请处理后再投递。</p> : null}
 
       {requirements.length > 0 && (
         <ul className="mt-3 space-y-1.5">

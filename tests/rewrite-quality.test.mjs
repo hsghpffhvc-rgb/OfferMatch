@@ -1,7 +1,21 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
+import { register } from "node:module"
 
-import { auditAndFinalizeRewrite, renderResumeMarkdown, isDeliverable } from "../lib/agent/rewrite-quality.ts"
+// 质量门禁现在会复用 @/lib/agent/source-sections 的模块边界检测，
+// 测试需要与脚本一致的 TS + 路径别名加载能力。
+register("../scripts/ts-hook.mjs", import.meta.url)
+
+const {
+  auditAndFinalizeRewrite,
+  renderResumeMarkdown,
+  isDeliverable,
+} = await import("../lib/agent/rewrite-quality.ts")
+const {
+  buildSourceSectionIndex,
+  detectSectionBoundaryConflicts,
+  renderSourceSectionIndex,
+} = await import("../lib/agent/source-sections.ts")
 
 /** 构造一份最小可用的 RewriteResult */
 function makeRewrite(overrides = {}) {
@@ -519,4 +533,322 @@ test("场景20：技能由原文补回时会标注待确认", () => {
   assert.ok(result.rewrite.resume.skills.length > 0)
   assert.ok(result.rewrite.verification.pending.some((item) => item.includes("技能")))
   assert.ok(result.issues.some((issue) => issue.code === "MISSING_SECTION" && issue.autoFixed))
+})
+
+/* ------------------------------------------------------------------ */
+/* 模块边界：实习不得并进全职岗、项目不得复述工作经历                     */
+/* ------------------------------------------------------------------ */
+
+const INTERNSHIP_ORIGINAL = [
+  "工作经历",
+  "2024.04 - 2026.09  某高校  AI 产品经理",
+  "- 负责校园知识问答系统规划",
+  "",
+  "实习经历",
+  "2023.05 - 2023.09  某科技公司  产品实习生",
+  "- 负责知识库标注与评测",
+  "",
+  "项目经历",
+  "校园知识问答系统（2024.04 - 2025.12，项目负责人）",
+  "- 设计 RAG 双路召回，召回率由 0.68 提升至 0.88",
+].join("\n")
+
+const SNAPSHOT_INDEX = {
+  origin: "snapshot",
+  hasInternship: true,
+  internshipLabels: ["产品实习生"],
+  internshipAsOwnSection: true,
+  sections: [
+    {
+      kind: "experience",
+      title: "工作经历",
+      items: [
+        { label: "AI 产品经理", meta: "某高校", date: "2024.04 - 2026.09", internship: false },
+        { label: "产品实习生", meta: "某科技公司", date: "2023.05 - 2023.09", internship: true },
+      ],
+    },
+    {
+      kind: "projects",
+      title: "项目经历",
+      items: [
+        { label: "校园知识问答系统", meta: "项目负责人", date: "2024.04 - 2025.12", internship: false },
+      ],
+    },
+  ],
+}
+
+function internshipRewrite(experienceItems, projectItems) {
+  const base = makeRewrite()
+  return {
+    ...base,
+    resume: {
+      ...base.resume,
+      sections: [
+        { type: "experience", title: "工作经历", items: experienceItems },
+        { type: "projects", title: "项目经历", items: projectItems },
+      ],
+    },
+  }
+}
+
+/* 21. 实习被并进全职岗：阻断为待完善草稿 */
+test("场景21：实习被并入全职岗位会被拦截", () => {
+  const merged = internshipRewrite(
+    [
+      {
+        role: "AI 产品经理",
+        company: "某高校",
+        summary: "负责知识问答系统规划，并主导知识库标注与评测",
+        highlights: [{ action: "负责校园知识问答系统规划与知识库评测", metric: "", result: "" }],
+      },
+    ],
+    [
+      {
+        name: "校园知识问答系统",
+        role: "项目负责人",
+        summary: "设计双路召回并完成精排",
+        highlights: [{ action: "设计 RAG 双路召回", metric: "召回率由 0.68 提升至 0.88", result: "" }],
+      },
+    ],
+  )
+
+  const result = run(merged, { originalResume: INTERNSHIP_ORIGINAL, sourceIndex: SNAPSHOT_INDEX })
+  const boundary = result.issues.filter((issue) => issue.code === "SECTION_BOUNDARY")
+  assert.ok(boundary.some((issue) => issue.message.includes("实习")))
+  assert.equal(result.rewrite.verification.status, "draft")
+})
+
+/* 22. 项目复述工作经历：同一段事实出现在两个模块 */
+test("场景22：项目经历复述工作经历会被拦截", () => {
+  const shared = {
+    summary: "负责校园知识问答系统的规划与落地",
+    highlights: [
+      { action: "设计三轮澄清流程并推动上线", metric: "覆盖 12 个院系", result: "问答准确率提升到 85%" },
+    ],
+  }
+  const duplicated = internshipRewrite(
+    [
+      { role: "AI 产品实习生", company: "某科技公司", ...shared },
+      { role: "AI 产品经理", company: "某高校", summary: "负责知识问答产品规划", highlights: [] },
+    ],
+    [{ name: "校园知识问答系统", role: "项目负责人", ...shared }],
+  )
+
+  const result = run(duplicated, { originalResume: INTERNSHIP_ORIGINAL, sourceIndex: SNAPSHOT_INDEX })
+  assert.ok(
+    result.issues.some(
+      (issue) => issue.code === "SECTION_BOUNDARY" && issue.message.includes("项目经历"),
+    ),
+  )
+})
+
+/* 23. 实习独立条目 + 独立项目：不误报，保持可投递 */
+test("场景23：实习独立成条时不做误伤", () => {
+  const healthy = internshipRewrite(
+    [
+      { role: "AI 产品经理", company: "某高校", summary: "负责校园知识问答产品的需求与验收", highlights: [] },
+      {
+        role: "产品实习生",
+        company: "某科技公司",
+        summary: "支撑知识库建设",
+        highlights: [{ action: "搭建评测集并完成基线标注", metric: "覆盖 300 条样本", result: "" }],
+      },
+    ],
+    [
+      {
+        name: "校园知识问答系统",
+        role: "项目负责人",
+        summary: "面向校园场景的双路召回方案",
+        highlights: [{ action: "设计 RAG 双路召回并完成精排", metric: "召回率由 0.68 提升至 0.88", result: "" }],
+      },
+    ],
+  )
+
+  const result = run(healthy, {
+    originalResume: INTERNSHIP_ORIGINAL,
+    sourceIndex: SNAPSHOT_INDEX,
+  })
+  assert.equal(
+    result.issues.some((issue) => issue.code === "SECTION_BOUNDARY"),
+    false,
+    "实习独立条目不应被判为边界冲突",
+  )
+  assert.equal(result.rewrite.verification.status, "ready")
+})
+
+/* 24. 结构索引渲染：把实习身份显式传给改写阶段 */
+test("场景24：结构索引会把实习身份写入提示词块", () => {
+  const index = buildSourceSectionIndex(
+    {
+      basics: { name: "候选人A", title: "AI 产品经理", contact: "" },
+      summary: "",
+      sections: [
+        {
+          title: "实习经历",
+          items: [{ label: "产品实习生", meta: "某科技公司", date: "2023.05 - 2023.09", points: [] }],
+        },
+        { title: "项目经历", items: [{ label: "校园知识问答系统", meta: "项目负责人", points: [] }] },
+      ],
+      coverage: { sourceChars: 0, coveredItems: 2, extras: [] },
+    },
+    INTERNSHIP_ORIGINAL,
+  )
+
+  assert.equal(index.origin, "snapshot")
+  const block = renderSourceSectionIndex(index)
+  assert.ok(block.includes("实习"))
+  assert.ok(block.includes("项目经历"))
+  assert.ok(block.includes("禁止把工作经历职责改写成项目条目"))
+
+  const conflicts = detectSectionBoundaryConflicts(
+    {
+      basics: {},
+      summary: {},
+      skills: [],
+      sections: [
+        {
+          type: "experience",
+          title: "工作经历",
+          items: [{ role: "AI 产品经理", company: "某高校", highlights: [] }],
+        },
+      ],
+    },
+    index,
+  )
+  assert.ok(conflicts.some((conflict) => conflict.code === "INTERNSHIP_MERGED"))
+})
+/* 25. 实习条目必须从工作经历里拆出来，独立成「实习经历」模块 */
+test("场景25：工作经历里的实习条目会被拆到独立的实习经历模块", () => {
+  const rewrite = internshipRewrite(
+    [
+      { role: "AI 产品经理", company: "武汉设计工程学院", summary: "负责知识问答产品规划", highlights: [] },
+      {
+        role: "产品运营实习生（内容向）",
+        company: "字节跳动 · 西瓜视频",
+        summary: "负责创作者运营",
+        highlights: [{ action: "搭建可复用选题库", metric: "粉丝量提升 20%", result: "" }],
+      },
+    ],
+    [
+      {
+        name: "校园知识问答系统",
+        role: "项目负责人",
+        summary: "面向校园场景的双路召回方案",
+        highlights: [{ action: "设计 RAG 双路召回并完成精排", metric: "召回率由 0.68 提升至 0.88", result: "" }],
+      },
+    ],
+  )
+
+  const result = run(rewrite, {
+    originalResume: INTERNSHIP_ORIGINAL,
+    sourceIndex: SNAPSHOT_INDEX,
+  })
+
+  const experienceSections = result.rewrite.resume.sections.filter(
+    (section) => section.type === "experience",
+  )
+  const fullTime = experienceSections.find((section) => section.title === "工作经历")
+  const internship = experienceSections.find((section) => section.title === "实习经历")
+
+  assert.ok(fullTime, "应保留工作经历模块")
+  assert.ok(internship, "实习应独立成模块")
+  assert.equal(fullTime.items.length, 1)
+  assert.equal(fullTime.items[0].company, "武汉设计工程学院")
+  assert.equal(internship.items.length, 1)
+  assert.ok(internship.items[0].role.includes("实习"))
+  assert.ok(result.markdown.includes("## 实习经历"))
+})
+
+/* 26. 同一项目的多个奖项归并为一条 */
+test("场景26：同一项目的多个奖项合并为一条", () => {
+  const base = makeRewrite()
+  const rewrite = {
+    ...base,
+    resume: {
+      ...base.resume,
+      sections: [
+        {
+          type: "experience",
+          title: "工作经历",
+          items: [
+            {
+              role: "AI 产品经理",
+              company: "某高校",
+              highlights: [{ action: "负责知识库评测", metric: "", result: "" }],
+            },
+          ],
+        },
+        {
+          type: "awards",
+          title: "荣誉奖项",
+          items: [
+            { name: "三下乡社会实践", notes: "湖北省优秀团队" },
+            { name: "三下乡社会实践", notes: "省二等奖（村域数字化研究成果）" },
+            { name: "一等奖学金", notes: "" },
+          ],
+        },
+      ],
+    },
+  }
+
+  const result = run(rewrite, {
+    originalResume: INTERNSHIP_ORIGINAL,
+    sourceIndex: SNAPSHOT_INDEX,
+  })
+
+  const awards = result.rewrite.resume.sections.find((section) => section.type === "awards")
+  assert.ok(awards)
+  assert.equal(awards.items.length, 2, "三下乡的两个奖项应合并为一条")
+  assert.equal(awards.items[0].name, "三下乡社会实践")
+  assert.ok(awards.items[0].notes.includes("湖北省优秀团队"))
+  assert.ok(awards.items[0].notes.includes("省二等奖"))
+  assert.ok(result.markdown.includes("湖北省优秀团队、省二等奖"))
+})
+
+test("跨部门任职概括不是岗位，原文总述与真实岗位信息保留", () => {
+  const original = "拥有丰富的跨部门工作经验，先后在图书馆资源推广中心、基建处以及人工智能中心三个不同职能部门任职与历练。深度参与部门日常事务，积极承担上级需求并推动业务落地，具备业务协调与资源整合能力。"
+  const rewrite = makeRewrite()
+  rewrite.resume.sections = [{type:"experience",title:"工作经历",items:[
+    {company:"某单位",role:"多部门任职与历练",summary:original,highlights:[]},
+    {company:"某单位",role:"AI 产品负责人",projectName:"企业知识库问答系统",highlights:[{title:"需求调研",action:"开展需求调研"}]},
+    {company:"某单位",role:"跨部门项目负责人",projectName:"业务项目",highlights:[{title:"项目推进",action:"协调项目"}]},
+  ]}]
+  const result = run(rewrite, {originalResume:original})
+  const items = result.rewrite.resume.sections[0].items
+  assert.equal(items[0].role, "")
+  assert.ok(items[0].summary.includes("图书馆资源推广中心"))
+  assert.ok(items[0].summary.includes("基建处"))
+  assert.ok(items[0].summary.includes("人工智能中心"))
+  assert.equal(items[2].role, "跨部门项目负责人")
+  assert.ok(result.markdown.includes("**企业知识库问答系统** · AI 产品负责人"))
+  assert.ok(!result.markdown.includes("**多部门任职与历练"))
+})
+
+test('明确的校园与志愿模块按原名保留，实习字样不会改变校园归属', () => {
+  const base = makeRewrite()
+  const sections = [
+    { type:'experience', title:'校园经历', items:[{name:'学生会', summary:'组织实习分享活动。',highlights:[]}] },
+    { type:'experience', title:'志愿服务', items:[{name:'社区志愿者',summary:'协助开展活动。',highlights:[]}] },
+  ]
+  const result=run({...base,resume:{...base.resume,sections}},{originalResume:'校园经历：组织实习分享活动。\n志愿服务：协助开展活动。'})
+  assert.deepEqual(result.rewrite.resume.sections.map(s=>s.title), ['校园经历','志愿服务'])
+  assert.ok(!result.issues.some(i=>i.code==='SECTION_BOUNDARY' && /原文含/.test(i.message)))
+})
+
+test('来源有明确模块但改写遗漏时标为草稿并触发结构修复', async () => {
+  const {getBlockingStructuralIssues}=await import('../lib/agent/rewrite-quality.ts')
+  const base=makeRewrite()
+  const source='社会实践：开展乡村调研。\n志愿服务：参与社区活动。'
+  const result=run(base,{originalResume:source})
+  assert.equal(result.rewrite.verification.status,'draft')
+  assert.equal(result.issues.filter(i=>i.code==='SECTION_BOUNDARY' && /原文含/.test(i.message)).length,2)
+  assert.equal(getBlockingStructuralIssues(base,source).length,2)
+})
+
+test('不同日期的相似经历及跨经历相同职责不会被静默删除', () => {
+  const base=makeRewrite()
+  const items=[{company:'同一单位',role:'运营',date:{start:'2020',end:'2021'},highlights:[{action:'负责用户调研'}]}, {company:'同一单位',role:'运营',date:{start:'2022',end:'2023'},highlights:[{action:'负责用户调研'}]}]
+  const result=run({...base,resume:{...base.resume,sections:[{type:'experience',title:'工作经历',items}]}},{originalResume:'工作经历\n2020 - 2021 运营\n2022 - 2023 运营'})
+  assert.equal(result.rewrite.resume.sections[0].items.length,2)
+  assert.ok(result.rewrite.resume.sections[0].items.every(item=>item.highlights.length===1))
 })

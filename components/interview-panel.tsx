@@ -82,7 +82,7 @@ export function InterviewPanel({
   const startDisabled = !bankReady || starting || isStreaming
 
   return (
-    <div id="phase-D" className="w-full text-left">
+    <div id="interview-panel" className="w-full text-left">
       {/* 未开始：卡片入口，不全屏弹窗挡操作 */}
       {!hasStarted && (
         <div className="rounded-3xl border border-dashed border-primary/30 bg-primary/5 p-5 text-center sm:p-6">

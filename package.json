@@ -10,7 +10,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "test": "node --test tests/rewrite-quality.test.mjs"
+    "postinstall": "node scripts/patch-react-pdf-cjk-hyphen.mjs",
+    "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",

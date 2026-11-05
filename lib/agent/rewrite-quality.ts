@@ -8,6 +8,16 @@ import type {
   StructuredResumeSkill,
   VerificationIssue,
 } from "@/lib/agent/types"
+import { normalizeExperienceItem } from "@/lib/agent/experience-structure"
+import { joinResumeProse } from "@/lib/agent/resume-text"
+import {
+  buildSourceSectionIndex,
+  detectSectionBoundaryConflicts,
+  detectMissingNamedSections,
+  getStructuredSectionItems as sectionItemsOf,
+  type BoundaryConflict,
+  type SourceSectionIndex,
+} from "@/lib/agent/source-sections"
 
 /**
  * 确定性质量层：只做程序能保证的事。
@@ -97,6 +107,10 @@ function looksTruncated(text: string): boolean {
 const CONTACT_PATTERN =
   /(\+?\d[\d\s-]{7,}\d)|[\w.+-]+@[\w-]+\.[\w.]+/
 const RESUME_SECTION_TITLES = ["工作经历", "项目经历", "教育背景", "专业技能", "教育经历"]
+const INTERNSHIP_MARKER = /实习|intern/i
+const SOURCE_EXPERIENCE_HEADER = /(?:^|\n)\s*(?:工作经历|工作经验|职业经历|任职经历)\s*[：:]?\s*(?:\n|$)/m
+const SOURCE_PROJECT_HEADER = /(?:^|\n)\s*(?:项目经历|项目经验|核心项目|代表项目|主要项目|项目实践)\s*[：:]?\s*(?:\n|$)/m
+
 
 function splitSentences(text: string): string[] {
   return normalizeSpace(text)
@@ -152,7 +166,7 @@ function polishSummary(text: string): { text: string; polluted: boolean } {
 
 function highlightText(highlight: StructuredResumeHighlight): string {
   return [highlight.action, highlight.metric, highlight.result]
-    .map((item) => normalizeSpace(item ?? ""))
+    .map((item) => joinResumeProse(normalizeSpace(item ?? "")))
     .filter(Boolean)
     .join("，")
 }
@@ -182,12 +196,107 @@ const SECTION_TITLE_BY_TYPE: Record<string, string> = {
   certifications: "证书",
 }
 
+const INTERNSHIP_SECTION_TITLE = "实习经历"
+
+/** 实习条目身份判定：岗位名/单位/描述里出现「实习 / intern」 */
+function isInternshipItem(item: StructuredResumeItem): boolean {
+  const identity = [item.role, item.title, item.company, item.subtitle, item.summary]
+    .map((value) => normalizeSpace(value ?? ""))
+    .filter(Boolean)
+    .join(" ")
+  return INTERNSHIP_MARKER.test(identity)
+}
+
+/**
+ * 实习与正式岗位必须分模块：同一份工作经历里混着实习和全职时，
+ * 按条目身份拆成「工作经历」与「实习经历」两块，实习块紧跟在最后一段工作经历之后。
+ */
+function splitInternshipSections(
+  sections: StructuredResumeSection[],
+): StructuredResumeSection[] {
+  const result: StructuredResumeSection[] = []
+  const internshipItems: StructuredResumeItem[] = []
+
+  for (const section of sections) {
+    if (section.type !== "experience") {
+      result.push(section)
+      continue
+    }
+    // 校园、志愿等独立模块不应因正文含“实习”而被改写归属。
+    if (!/^(?:工作经历|工作经验|职业经历|任职经历|实习经历|实习经验)$/.test(section.title)) {
+      result.push(section)
+      continue
+    }
+    const fullTime = section.items.filter((item) => !isInternshipItem(item))
+    internshipItems.push(...section.items.filter((item) => isInternshipItem(item)))
+    if (fullTime.length > 0) result.push({ ...section, items: fullTime })
+  }
+
+  if (internshipItems.length === 0) return result
+
+  const internshipSection: StructuredResumeSection = {
+    type: "experience",
+    title: INTERNSHIP_SECTION_TITLE,
+    items: internshipItems,
+  }
+  let insertAt = -1
+  result.forEach((section, index) => {
+    if (section.type === "experience") insertAt = index
+  })
+  if (insertAt >= 0) result.splice(insertAt + 1, 0, internshipSection)
+  else result.push(internshipSection)
+
+  return result
+}
+
+/** 奖项清单里可能用到的分隔符 */
+const AWARD_SPLITTER = /[、，,;；/|]+/
+
+function splitAwardText(value: string): string[] {
+  return normalizeSpace(value)
+    .split(AWARD_SPLITTER)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+/**
+ * 荣誉奖项严格归并：同一个项目 / 活动拿到的多个奖项算一条，
+ * 例如「三下乡社会实践」下的「湖北省优秀团队」与「省二等奖」。
+ * 约定：name 是项目/活动名，notes 是该项目下的奖项清单。
+ */
+function mergeAwardItems(items: StructuredResumeItem[]): StructuredResumeItem[] {
+  const groups: Array<{ name: string; awards: string[] }> = []
+
+  for (const item of items) {
+    const name = normalizeSpace(item.name ?? item.title ?? "")
+    const notes = normalizeSpace(item.notes ?? item.summary ?? "")
+    if (!name && !notes) continue
+
+    const key = name || notes
+    const awards = splitAwardText(notes)
+    const existing = groups.find((group) => group.name === key)
+
+    if (existing) {
+      for (const award of awards) {
+        if (!existing.awards.includes(award)) existing.awards.push(award)
+      }
+      continue
+    }
+    groups.push({ name: key, awards })
+  }
+
+  return groups.map((group) => ({
+    name: group.name,
+    notes: group.awards.length > 0 ? group.awards.join("、") : undefined,
+  }))
+}
+
 /**
  * 归一化章节类型与标题。
  * 模型常把项目写成 type:"project"（单数）或把项目标题塞进 experience，
  * 后者会让 PDF 的 VALID_SECTION_TYPES 直接丢弃整段内容。
  */
-function normalizeSectionMeta(section: StructuredResumeSection): { type: string; title: string } {
+function normalizeSectionMeta(section: StructuredResumeSection, originalResume: string): { type: string; title: string } {
   const rawType = normalizeSpace(section.type ?? "").toLowerCase()
   const title = normalizeSpace(section.title ?? "")
   let type = SECTION_TYPE_ALIASES[rawType] ?? rawType
@@ -202,31 +311,24 @@ function normalizeSectionMeta(section: StructuredResumeSection): { type: string;
   }
 
   const canonical = SECTION_TITLE_BY_TYPE[type]
-  const titleMatchesType =
-    type === "experience"
-      ? /工作|任职|实习|就业/.test(title)
-      : type === "projects"
-        ? /项目/.test(title)
-        : type === "education"
-          ? /教育|学历/.test(title)
-          : type === "awards"
-            ? /荣誉|奖项/.test(title)
-            : type === "languages"
-              ? /语言/.test(title)
-              : type === "certifications"
-                ? /证书|认证/.test(title)
-                : Boolean(title)
-
-  // 章节标题应是模块名（如"项目经历"）：标题不像模块名时一律用标准标题，
-  // 否则 Markdown/PDF 会失去模块层级（例如出现 "## 校园知识问答系统"）
-  if (canonical && !titleMatchesType) return { type, title: canonical }
+  // 任意候选人的模块命名都可能合法；只有缺标题时才补默认值。
+  // 若模型把条目名误当成标题，且原文明确给出对应的标准模块标题，则恢复该模块名。
+  const titleIsItem = section.items.some((item) => [item.name, item.title, item.role, item.projectName].some((value) => value?.trim() === title))
+  const sourceHasCanonicalHeading = canonical && originalResume.replace(/\r\n?/g, "\n").split("\n")
+    .some((line) => line.trim().replace(/^#{1,6}\s*/, "").replace(/[：:]$/, "") === canonical)
+  if (title && titleIsItem && sourceHasCanonicalHeading) return { type, title: canonical }
   return { type, title: title || canonical || "经历" }
 }
 
 function itemContentFingerprint(item: StructuredResumeItem): string {
   const parts = [
-    normalizeSpace(item.role ?? item.name ?? item.title ?? ""),
-    normalizeSpace(item.company ?? item.subtitle ?? item.school ?? ""),
+    normalizeSpace(item.role || item.name || item.title || item.school || ""),
+    normalizeSpace(item.company || item.subtitle || ""),
+    normalizeSpace(item.projectName ?? ""),
+    normalizeSpace(item.degree ?? ""),
+    normalizeSpace(item.major ?? ""),
+    normalizeSpace(item.date?.start ?? ""),
+    normalizeSpace(item.date?.end ?? ""),
     normalizeSpace(item.summary ?? item.notes ?? ""),
     ...(item.highlights ?? []).map((highlight) => highlightText(highlight)),
   ]
@@ -293,7 +395,7 @@ export interface NormalizeReport {
   keepAmbiguousSection: boolean
 }
 
-function normalizeResume(resume: StructuredResume): { resume: StructuredResume; report: NormalizeReport } {
+function normalizeResume(resume: StructuredResume, originalResume = ""): { resume: StructuredResume; report: NormalizeReport } {
   const report: NormalizeReport = {
     summaryPolluted: false,
     duplicatedLines: 0,
@@ -307,7 +409,6 @@ function normalizeResume(resume: StructuredResume): { resume: StructuredResume; 
   report.summaryPolluted = summary.polluted
 
   const seenItems = new Set<string>()
-  const seenHighlights = new Set<string>()
   const sections: StructuredResumeSection[] = []
 
   // 去重优先级：项目经历先处理，重复内容优先保留在项目块而不是工作经历块
@@ -326,10 +427,11 @@ function normalizeResume(resume: StructuredResume): { resume: StructuredResume; 
       report.internalMarkers += 1
       continue
     }
-    const meta = normalizeSectionMeta(section)
+    const meta = normalizeSectionMeta(section, originalResume)
 
     const items: StructuredResumeItem[] = []
-    for (const item of section.items) {
+    for (const sourceItem of section.items) {
+      const item = meta.type === "experience" ? normalizeExperienceItem(sourceItem) : sourceItem
       const fingerprint = itemContentFingerprint(item)
       if (!fingerprint) continue
 
@@ -345,6 +447,7 @@ function normalizeResume(resume: StructuredResume): { resume: StructuredResume; 
       }
       seenItems.add(fingerprint)
 
+      const seenHighlights = new Set<string>()
       const highlights = (item.highlights ?? []).filter((highlight) => {
         const text = highlightText(highlight).replace(/\s+/g, "")
         if (!text) return false
@@ -379,8 +482,10 @@ function normalizeResume(resume: StructuredResume): { resume: StructuredResume; 
 
     if (!items.length) continue
 
-    // 同类型章节合并（例如工作经历被拆成两块），避免重复标题
-    const existing = sections.find((entry) => entry.type === meta.type)
+    // 同类型同标题的章节合并（例如工作经历被拆成两块）；「实习经历」必须与「工作经历」分开
+    const existing = sections.find(
+      (entry) => entry.type === meta.type && entry.title === meta.title,
+    )
     if (existing) {
       existing.items.push(...items)
       continue
@@ -444,6 +549,13 @@ function normalizeResume(resume: StructuredResume): { resume: StructuredResume; 
 
   const skills = skillGroups.filter((group) => group.items.length > 0)
 
+  // 荣誉奖项：同一项目 / 活动的多个奖项合并成一条，避免重复展示
+  const awardSection = sections.find((section) => section.type === "awards")
+  if (awardSection) {
+    const mergedAwards = mergeAwardItems(awardSection.items)
+    awardSection.items = mergedAwards.length > 0 ? mergedAwards : awardSection.items
+  }
+
   return {
     resume: {
       basics: {
@@ -458,7 +570,7 @@ function normalizeResume(resume: StructuredResume): { resume: StructuredResume; 
         website: normalizeSpace(resume.basics?.website ?? ""),
       },
       summary: { ...resume.summary, text: summary.text },
-      sections,
+      sections: splitInternshipSections(sections),
       skills,
     },
     report,
@@ -484,7 +596,7 @@ export function renderResumeMarkdown(resume: StructuredResume): string {
     .filter(Boolean)
   if (contacts.length) lines.push(contacts.join(CONTACT_SEPARATOR))
 
-  const summaryText = normalizeSpace(resume.summary?.text ?? "")
+  const summaryText = joinResumeProse(normalizeSpace(resume.summary?.text ?? ""))
   if (summaryText) {
     lines.push("", "## 个人总结", summaryText)
   }
@@ -497,9 +609,11 @@ export function renderResumeMarkdown(resume: StructuredResume): string {
   })
 
   for (const section of renderSections) {
-    const items = (section.items ?? []).filter(
+    const items = (section.items ?? []).map((item) => section.type === "experience" ? normalizeExperienceItem(item) : item).filter(
       (item) =>
-        normalizeSpace(item.role ?? item.name ?? item.title ?? "") ||
+        normalizeSpace(item.role || item.name || item.title || "") ||
+        normalizeSpace(item.company ?? "") ||
+        normalizeSpace(item.projectName ?? "") ||
         normalizeSpace(item.school ?? "") ||
         normalizeSpace(item.degree ?? item.major ?? "") ||
         normalizeSpace(item.summary ?? item.notes ?? "") ||
@@ -513,16 +627,22 @@ export function renderResumeMarkdown(resume: StructuredResume): string {
       // 项目：项目名称 · 个人角色；教育：学校 · 专业/学位；工作：岗位 · 单位
       const isProject = section.type === "projects"
       const isEducation = section.type === "education"
-      const primary = isProject
-        ? item.name ?? item.title ?? item.role
+      const isExperience = section.type === "experience"
+      const isExperienceContext = section.type === "experience" && Boolean(normalizeSpace(item.projectName ?? ""))
+      const primary = isExperienceContext
+        ? item.projectName
+        : isProject
+        ? item.name || item.title || item.role
         : isEducation
-          ? item.school ?? item.name ?? item.title
-          : item.role ?? item.title ?? item.name
-      const secondary = isProject
-        ? (item.role && item.role !== primary ? item.role : item.company ?? item.subtitle)
+          ? item.school || item.name || item.title
+          : isExperience ? (item.company || item.role || item.title || item.name) : item.role || item.title || item.name
+      const secondary = isExperienceContext
+        ? (item.role !== primary ? item.role : "")
+        : isProject
+        ? (item.role && item.role !== primary ? item.role : item.company || item.subtitle)
         : isEducation
-          ? item.degree ?? item.major ?? item.subtitle
-          : item.company ?? item.subtitle ?? item.school
+          ? item.degree || item.major || item.subtitle
+          : isExperience && item.company ? item.role : item.company || item.subtitle || item.school
 
       const heading = [primary, secondary]
         .map((value) => normalizeSpace(value ?? ""))
@@ -534,9 +654,14 @@ export function renderResumeMarkdown(resume: StructuredResume): string {
       const location = normalizeSpace(item.location ?? "")
       const metaLine = [meta, location].filter(Boolean).join(CONTACT_SEPARATOR)
 
-      if (heading) lines.push("", `**${heading}**`)
+      if (isExperienceContext && item.company) lines.push("", `**${normalizeSpace(item.company)}**`)
+      if (heading) {
+        const first = normalizeSpace(primary ?? "")
+        const second = normalizeSpace(secondary ?? "")
+        lines.push("", first ? `**${first}**${second ? ` · ${second}` : ""}` : `**${second}**`)
+      }
       if (metaLine) lines.push(metaLine)
-      const description = normalizeSpace(item.summary ?? item.notes ?? "")
+      const description = joinResumeProse(normalizeSpace(item.summary ?? item.notes ?? ""))
       if (description) lines.push(description)
 
       for (const highlight of item.highlights ?? []) {
@@ -718,6 +843,8 @@ function extractSourceSkills(originalResume: string): Array<{ dimension: string;
 export interface AuditContext {
   originalResume: string
   evidence?: string
+  /** 原文结构索引（阶段 A 快照或原文标题解析）；用于校验模块边界 */
+  sourceIndex?: SourceSectionIndex | null
 }
 
 export interface AuditResult {
@@ -736,9 +863,18 @@ export function auditAndFinalizeRewrite(
   context: AuditContext,
 ): AuditResult {
   const issues: VerificationIssue[] = []
-  const normalizedResult = normalizeResume(rewrite.resume)
+  const normalizedResult = normalizeResume(rewrite.resume, context.originalResume)
   const resume = normalizedResult.resume
   const report = normalizedResult.report
+
+  if (context.originalResume.trim() && !resume.basics.name) {
+    issues.push({
+      code: "MISSING_SECTION",
+      message: "未识别到姓名，请核对原简历中的个人信息后再投递。",
+      severity: "error",
+      autoFixed: false,
+    })
+  }
 
   // 完整性兜底：原始简历有技能块但输出没写，按原文补回技能名称（去掉自评词）
   if ((resume.skills ?? []).length === 0) {
@@ -761,7 +897,7 @@ export function auditAndFinalizeRewrite(
 
   // 完整性阻断：原文有教育经历但模型漏掉了，同样不照搬原文
   const hasEducationSection = (resume.sections ?? []).some((section) => section.type === "education")
-  if (!hasEducationSection && /教育背景|教育经历/.test(context.originalResume)) {
+  if (!hasEducationSection && /教育背景|教育经历|教育信息|学历背景/.test(context.originalResume)) {
     issues.push({
       code: "MISSING_SECTION",
       message: "原始简历含教育经历，但本次重写没有输出教育背景模块，请点击「重新执行重写」补齐后再投递。",
@@ -791,6 +927,50 @@ export function auditAndFinalizeRewrite(
       message:
         "原始简历含项目经历，但本次重写没有输出项目模块。项目与岗位相关时必须保留并重写，请点击「重新执行重写」再试。",
       severity: "error",
+      autoFixed: false,
+    })
+  }
+
+  // 结构边界：实习被并入全职岗位、项目经历复述工作经历，都属于「逻辑混乱」的硬伤。
+  // 校验在去重前后各跑一次：模型原文里的跨模块重复也要暴露，不能靠去重静默吃掉。
+  const sourceIndex =
+    context.sourceIndex ?? buildSourceSectionIndex(null, context.originalResume)
+  const rawExperiences = sectionItemsOf(rewrite.resume, "experience")
+  const rawProjects = sectionItemsOf(rewrite.resume, "projects")
+
+  // 去重会跨模块吃掉重复内容，导致某个模块被清空；原文本来有该模块时这不是「修好了」，而是丢掉了一整块经历。
+  const swallowedProjectEntry =
+    rawProjects.length > 0
+    && sectionItemsOf(resume, "projects").length === 0
+    && SOURCE_PROJECT_HEADER.test(context.originalResume)
+  const swallowedExperienceEntry =
+    rawExperiences.length > 0
+    && sectionItemsOf(resume, "experience").length === 0
+    && SOURCE_EXPERIENCE_HEADER.test(context.originalResume)
+  // 跨模块完全相同的内容会被去重合并到一条：实习条目会因此丢掉正文
+  const swallowedInternshipContent = sectionItemsOf(resume, "experience")
+    .some(({ item }) => INTERNSHIP_MARKER.test(`${item.role ?? ""} ${item.company ?? ""}`)
+      && !(item.highlights ?? []).length
+      && !normalizeSpace(item.summary ?? ""))
+
+  const boundaryConflicts: BoundaryConflict[] = [
+    ...detectSectionBoundaryConflicts(rewrite.resume, sourceIndex),
+    ...detectMissingNamedSections(resume, context.originalResume),
+    ...(swallowedProjectEntry || swallowedExperienceEntry || swallowedInternshipContent
+      ? [{
+          code: "PROJECT_RESTATES_EXPERIENCE" as const,
+          severity: "error" as const,
+          message: swallowedProjectEntry
+            ? "项目经历与工作经历内容完全重复，去重后项目模块为空；项目经历必须写独立交付物"
+            : "工作经历与项目经历内容完全重复，去重后有条目丢失，请重新划分模块边界",
+        }]
+      : []),
+  ]
+  for (const conflict of boundaryConflicts) {
+    issues.push({
+      code: "SECTION_BOUNDARY",
+      message: conflict.message,
+      severity: conflict.severity,
       autoFixed: false,
     })
   }
@@ -855,6 +1035,14 @@ export function auditAndFinalizeRewrite(
   }
 
   const markdown = renderResumeMarkdown(resume)
+  if (PLACEHOLDER.test(markdown)) {
+    issues.push({
+      code: "PARSE_INCOMPLETE",
+      message: "简历正文仍有 XXX 占位，请补充或移除后再投递。",
+      severity: "error",
+      autoFixed: false,
+    })
+  }
   // 事实类检查同时覆盖最终正文与模型原始 Markdown：模型写法有风险也要暴露出来
   const candidateBodies = [markdown, modelMarkdown].filter(Boolean)
 
@@ -953,6 +1141,9 @@ export function auditAndFinalizeRewrite(
   const skillBackfilled = report.skillBackfilled
   const pending = [
     ...(skillBackfilled ? ["技能列表由原始简历补回，请确认是否都与目标岗位相关"] : []),
+    ...boundaryConflicts
+      .filter((conflict) => conflict.severity === "warning")
+      .map((conflict) => conflict.message),
     ...(rewrite.analysis?.gaps ?? []),
     ...requirements.filter((item) => item.status === "none").map((item) => `待补充证据：${item.requirement}`),
   ].filter(Boolean)
@@ -985,6 +1176,24 @@ export function originalHasProjectBlock(originalResume: string): boolean {
 /** 重写结果里是否有可渲染的项目模块 */
 export function hasProjectSection(rewrite: RewriteResult | null | undefined): boolean {
   return Boolean(rewrite?.resume?.sections?.some((section) => section.type === "projects"))
+}
+
+/**
+ * 供重写流水线判断是否需要再做一次定向修复：
+ * 模块漏项、或实习/项目边界冲突（实习被并进全职岗、项目复述工作经历）。
+ */
+export function getBlockingStructuralIssues(
+  rewrite: RewriteResult,
+  originalResume: string,
+  sourceIndex?: SourceSectionIndex | null,
+): string[] {
+  const issues: string[] = []
+  const index = sourceIndex ?? buildSourceSectionIndex(null, originalResume)
+  for (const conflict of detectSectionBoundaryConflicts(rewrite.resume, index)) {
+    if (conflict.severity === "error") issues.push(conflict.message)
+  }
+  for (const conflict of detectMissingNamedSections(rewrite.resume, originalResume)) issues.push(conflict.message)
+  return issues
 }
 
 /** 供 UI 判断是否可以直接投递 */

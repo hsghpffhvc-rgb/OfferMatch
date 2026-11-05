@@ -22,12 +22,12 @@ export async function POST(request: Request) {
     return Response.json({ error: "请求体必须是合法 JSON" }, { status: 400 })
   }
 
-  const jd = body.jd?.trim()
+  const jd = body.jd?.trim().slice(0, 6000)
   if (!jd) {
     return Response.json({ error: "请提供岗位 JD 文本（jd 字段）" }, { status: 400 })
   }
 
-  const resume = body.resume?.trim() ?? ""
+  const resume = (body.resume ?? "").trim().slice(0, 20_000)
 
   const stream = createSSEStream(async (emit) => {
     await runAgentPipeline(jd, resume, emit)

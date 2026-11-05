@@ -13,16 +13,25 @@ export const creativeStyles = StyleSheet.create({
     fontSize: 9,
     // 主栏使用正常文档流；给绝对定位的侧栏预留空间，避免分页死循环。
     paddingLeft: 178,
+    paddingTop: 24,
+    paddingBottom: 24,
   },
 
   // ===== Sidebar =====
-  sidebar: {
+  // 深色色块每页都保留（fixed），侧栏内容只在第一页渲染（见 CreativeTemplate）
+  sidebarBanner: {
     position: "absolute",
     left: 0,
     top: 0,
     bottom: 0,
     width: 178, // ~63mm
     backgroundColor: INK,
+  },
+  sidebar: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    width: 178, // ~63mm
     paddingHorizontal: 18,
     paddingVertical: 24,
     color: "#FFFFFF",
@@ -157,7 +166,6 @@ export const creativeStyles = StyleSheet.create({
   // ===== Main content =====
   main: {
     paddingHorizontal: 20,
-    paddingVertical: 24,
     color: MAIN_TEXT,
   },
 
@@ -181,7 +189,7 @@ export const creativeStyles = StyleSheet.create({
     justifyContent: "center",
   },
   mainTitleIconText: {
-    fontSize: 9,
+    fontSize: 11,
     color: "#FFFFFF",
     fontWeight: "bold",
   },
@@ -193,9 +201,10 @@ export const creativeStyles = StyleSheet.create({
 
   // Summary
   summaryText: {
-    fontSize: 9.2,
+    fontSize: 10,
     lineHeight: 1.4,
     color: MAIN_TEXT,
+    textAlign: "justify",
   },
 
   // Experience / Projects (left border accent)
@@ -228,6 +237,26 @@ export const creativeStyles = StyleSheet.create({
     marginTop: 2,
     marginBottom: 2,
   },
+  // 同一单位内不同岗位：岗位名 + 岗位时间各占一侧
+  roleTitleRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "baseline",
+    marginTop: 3,
+    marginBottom: 1,
+  },
+  roleTitle: {
+    fontSize: 9.6,
+    fontWeight: "bold",
+    color: ACCENT,
+    flex: 1,
+    paddingRight: 8,
+  },
+  roleDate: {
+    fontSize: 8.2,
+    color: "#9FB4C8",
+    flexShrink: 0,
+  },
   bulletItem: {
     flexDirection: "row",
     marginTop: 2,
@@ -238,11 +267,17 @@ export const creativeStyles = StyleSheet.create({
     marginRight: 5,
   },
   bulletText: {
-    fontSize: 9.2,
+    fontSize: 10,
     lineHeight: 1.4,
     color: MAIN_TEXT,
     flex: 1,
+    textAlign: "justify",
   },
+  contextTitle: { fontSize: 10.2, fontWeight: "bold", color: INK, flex: 1, paddingRight: 8 },
+  contextSecondary: { fontSize: 9.5, fontWeight: "normal", color: ACCENT },
+  // 独立段落必须按内容撑开高度，不复用行内 flex 文本样式。
+  paragraphText: { fontSize: 10, lineHeight: 1.4, color: MAIN_TEXT, textAlign: "justify", flexShrink: 0 },
+  contextDescription: { textAlign: "justify", fontSize: 9.2, lineHeight: 1.4, color: MAIN_TEXT, marginTop: 2, marginBottom: 2 },
   bulletTitle: {
     fontWeight: "bold",
     color: INK,

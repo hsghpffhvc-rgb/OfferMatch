@@ -73,7 +73,10 @@ export function useResumePreviewParts({
   const mappedData = pdfMapping.data
   const showMarkdown = Boolean(markdown) || Boolean(isLoading)
   // 校验状态：draft 表示不能标记为可直接投递
-  const verificationStatus = rewriteResult?.verification?.status ?? null
+  const hasPlaceholder = /XXX|×××/.test(markdown)
+  const verificationStatus = rewriteResult && (!rewriteResult.resume.basics.name?.trim() || hasPlaceholder)
+    ? "draft"
+    : rewriteResult?.verification?.status ?? null
 
   const handleCopy = async () => {
     if (!markdown) return
@@ -101,7 +104,7 @@ export function useResumePreviewParts({
               </span>
             ) : verificationStatus === "ready" ? (
               <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
-                可直接投递
+                基础检查通过
               </span>
             ) : null}
           </div>
@@ -129,6 +132,16 @@ export function useResumePreviewParts({
         <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
           复制与导出仅包含简历正文，不含原始简历、匹配分析或修改建议。
         </p>
+        {rewriteResult && !rewriteResult.resume.basics.name?.trim() ? (
+          <p role="status" className="mb-3 text-xs text-amber-700 dark:text-amber-300">
+            未识别到姓名，请核对原简历中的个人信息后再投递。
+          </p>
+        ) : null}
+        {hasPlaceholder ? (
+          <p role="status" className="mb-3 text-xs text-amber-700 dark:text-amber-300">
+            简历正文仍有 XXX 占位，请补充或移除后再投递。
+          </p>
+        ) : null}
         <div className="max-h-96 overflow-y-auto rounded-2xl border border-border/50 bg-background p-4">
           {isLoading && !markdown ? (
             <p className="text-sm text-muted-foreground">
@@ -218,7 +231,7 @@ function MarkdownContent({ content }: { content: string }) {
         }
         if (line.trim() === "") return <br key={i} />
         return (
-          <p key={i} className="text-foreground">
+          <p key={i} className="text-justify text-foreground">
             {line}
           </p>
         )

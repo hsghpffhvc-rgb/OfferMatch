@@ -411,55 +411,40 @@ export function getIncompleteInterviewState(): PersistedInterviewState | null {
 
 export type IncompleteSessionKind = "analysis" | "interview" | "both" | "done"
 
-export function detectIncompleteSession(): {
+export interface PendingSession {
   kind: IncompleteSessionKind
   resumePhase: AgentPhase | null
-  updatedAt: number
-} | null {
+}
+
+/**
+ * 只有「真的被中断、且需要用户决定怎么走」时才返回待确认会话。
+ *
+ * 正常中间态（A/B 已完成、正在等补证据或等重写）不再询问：
+ * 用户在站内跳转、查看详情、返回都只是同一次分析的继续，弹「是否继续运行」会打断阶段层次。
+ */
+export function detectPendingSession(): PendingSession | null {
   const snapshot = getWorkspace()
   if (!snapshot) return null
 
-  const incompleteAgent = getIncompleteAgentState()
-  const incompleteInterview = getIncompleteInterviewState()
+  const agent = snapshot.agent
+  const analysisInterrupted =
+    (agent.status === "streaming" || agent.status === "error")
+    && !(agent.persona && agent.outline)
+  const interviewIncomplete = Boolean(getIncompleteInterviewState())
 
-  // 已完成分析但面试练习未做完
-  const doneAgent = getPersistedAgentState()
-  const interviewPracticeIncomplete =
-    doneAgent
-    && snapshot.interview.status === "done"
-    && snapshot.interview.interview
-    && (snapshot.interview.progress?.submittedQuestionIds.length ?? 0) > 0
-    && (snapshot.interview.progress?.submittedQuestionIds.length ?? 0)
-      < snapshot.interview.interview.questions.length
+  if (!analysisInterrupted && !interviewIncomplete) return null
 
-  if (incompleteAgent || incompleteInterview || interviewPracticeIncomplete) {
-    let kind: IncompleteSessionKind = "analysis"
-    if ((incompleteInterview || interviewPracticeIncomplete) && incompleteAgent) {
-      kind = "both"
-    } else if (incompleteInterview || interviewPracticeIncomplete) {
-      kind = "interview"
-    }
+  const kind: IncompleteSessionKind =
+    analysisInterrupted && interviewIncomplete
+      ? "both"
+      : analysisInterrupted
+        ? "analysis"
+        : "interview"
 
-    return {
-      kind,
-      resumePhase:
-        snapshot.resumePhase
-        ?? incompleteAgent?.currentPhase
-        ?? (kind === "interview" ? "E" : "A"),
-      updatedAt: snapshot.updatedAt,
-    }
+  return {
+    kind,
+    resumePhase: snapshot.resumePhase ?? agent.currentPhase ?? (kind === "interview" ? "E" : "A"),
   }
-
-  // 分析已完成：也要用户确认「继续上次 / 开始新分析」，避免静默卡住旧状态
-  if (doneAgent) {
-    return {
-      kind: "done",
-      resumePhase: snapshot.resumePhase ?? "D",
-      updatedAt: snapshot.updatedAt,
-    }
-  }
-
-  return null
 }
 
 export function getPersistedInputs(): WorkspaceInputs {

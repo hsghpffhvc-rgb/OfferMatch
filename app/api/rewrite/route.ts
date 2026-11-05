@@ -1,6 +1,6 @@
 import { runRewritePipeline } from "@/lib/agent/run-agent"
 import { createSSEStream } from "@/lib/agent/sse"
-import type { OutlineResult, PersonaResult } from "@/lib/agent/types"
+import type { OutlineResult, PersonaResult, StructuredResume } from "@/lib/agent/types"
 
 export const runtime = "nodejs"
 export const maxDuration = 120
@@ -16,6 +16,7 @@ export async function POST(request: Request) {
     outline?: OutlineResult
     resume?: string
     evidence?: string
+    previousResume?: StructuredResume
   }
 
   try {
@@ -41,7 +42,9 @@ export async function POST(request: Request) {
   const evidence = (body.evidence ?? "").trim().slice(0, MAX_EVIDENCE_CHARS)
 
   const stream = createSSEStream(async (emit) => {
-    await runRewritePipeline(jd, body.persona!, body.outline!, resume, evidence, emit)
+    const previous = body.previousResume && Array.isArray(body.previousResume.sections) && Array.isArray(body.previousResume.skills)
+      ? body.previousResume : undefined
+    await runRewritePipeline(jd, body.persona!, body.outline!, resume, evidence, emit, previous)
   })
 
   return new Response(stream, {

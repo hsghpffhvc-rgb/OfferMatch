@@ -5,7 +5,68 @@ export type PhaseStatus = "start" | "streaming" | "complete" | "error"
 /** 结果来源：模型正常产出 / 降级示例 */
 export type ResultSource = "model" | "fallback"
 
-/** 阶段 A：理想候选人画像 */
+/* ------------------------------------------------------------------ */
+/* 阶段 A：JD 解析 + 简历全景梳理 + 多维度分析                          */
+/* ------------------------------------------------------------------ */
+
+/** 简历全景梳理中的一个条目（岗位 / 项目 / 学校 / 技能分组） */
+export interface ResumeSnapshotItem {
+  /** 条目主名称：岗位名 / 项目名 / 学校 / 能力维度 */
+  label: string
+  /** 二级信息：单位、项目角色、专业 · 学历 */
+  meta?: string
+  /** 时间区间，保持原文写法 */
+  date?: string
+  /** 原文中的要点，逐条梳理，不得编造 */
+  points: string[]
+}
+
+/** 简历全景梳理中的一个模块 */
+export interface ResumeSnapshotSection {
+  /** 模块名：工作经历 / 项目经历 / 教育背景 / 专业技能 / 荣誉奖项 / 其他 */
+  title: string
+  items: ResumeSnapshotItem[]
+}
+
+/** 覆盖度自检：用于判断梳理结果是否覆盖了整份简历 */
+export interface SnapshotCoverage {
+  /** 原文有效字符数 */
+  sourceChars: number
+  /** 已被梳理的条目数量 */
+  coveredItems: number
+  /** 未能归入模块、但已被记录的原文片段 */
+  extras: string[]
+}
+
+/** 阶段 A 的简历全景梳理：必须与最终简历内容一致、且覆盖原文全部条目 */
+export interface ResumeSnapshot {
+  basics: { name: string; title: string; contact: string }
+  summary: string
+  sections: ResumeSnapshotSection[]
+  coverage: SnapshotCoverage
+}
+
+/** 多维度分析中的单个维度 */
+export interface DimensionInsight {
+  /** resumeCoverage | jdAlignment | evidenceStrength | quantification | ats | risk */
+  key: string
+  name: string
+  /** 0-100，仅用于展示强弱，不参与最终评分 */
+  score: number
+  verdict: string
+  findings: string[]
+  suggestions: string[]
+}
+
+/** JD 拆解：职责 / 硬性要求 / 加分项 / 隐含诉求 */
+export interface JdBreakdown {
+  responsibilities: string[]
+  mustHave: string[]
+  niceToHave: string[]
+  implicitNeeds: string[]
+}
+
+/** 阶段 A：理想候选人画像 + 简历梳理 */
 export interface PersonaResult {
   title: string
   industry: string
@@ -14,19 +75,73 @@ export interface PersonaResult {
   businessPainPoints: string[]
   interviewKeywords: string[]
   optimizationAdvice: string[]
+  /** JD 结构化拆解 */
+  jdBreakdown?: JdBreakdown
+  /** 简历全景梳理（覆盖全部原文条目） */
+  resumeSnapshot?: ResumeSnapshot
+  /** 多维度分析结果 */
+  dimensionInsights?: DimensionInsight[]
+  /** 模型思考摘要（前端另有流式 reasoning，可折叠回看） */
+  reasoningSummary?: string
   source?: ResultSource
 }
 
-/** 阶段 B：理想简历大纲 */
+/* ------------------------------------------------------------------ */
+/* 阶段 B：结构化理想简历大纲                                            */
+/* ------------------------------------------------------------------ */
+
+/** 兼容旧数据的扁平大纲章节 */
 export interface ResumeOutlineSection {
   heading: string
   bullets: string[]
 }
 
+/** 结构化大纲的条目：对应简历中的一个具体条目 */
+export interface OutlineItem {
+  /** 条目主名称，应与阶段A梳理中的 label 对应 */
+  label: string
+  /** 二级信息：单位 / 角色 / 专业 */
+  meta?: string
+  /** 保留原文时间，便于核对 */
+  date?: string
+  /** 该条目要突出的要点（STAR 方向） */
+  focus: string[]
+  /** 该条目对应的原简历来源（阶段A梳理中的模块/条目名） */
+  sourceRef?: string
+  /** 是否建议保留：keep | merge | drop */
+  action?: "keep" | "merge" | "drop"
+  /** action 的理由 */
+  reason?: string
+}
+
+/** 结构化大纲的模块：与简历 schema 对齐 */
+export interface OutlineStructuredSection {
+  type: "summary" | "experience" | "projects" | "education" | "skills" | "awards" | "other"
+  title: string
+  items: OutlineItem[]
+}
+
+/** JD 要求 → 大纲覆盖点的映射 */
+export interface OutlineJdMapping {
+  requirement: string
+  howToCover: string
+  /** 对应到哪个模块/条目 */
+  target: string
+}
+
 export interface OutlineResult {
   summary: string
+  /** 兼容字段：由结构化数据派生，便于旧组件使用 */
   sections: ResumeOutlineSection[]
   keyHighlights: string[]
+  /** 理想简历定位（一句话） */
+  positioning?: string
+  /** 结构化大纲（新） */
+  structured?: OutlineStructuredSection[]
+  /** JD 覆盖映射（新） */
+  jdMapping?: OutlineJdMapping[]
+  /** 仍需补充信息的缺口（新） */
+  gaps?: string[]
   source?: ResultSource
 }
 
@@ -162,6 +277,7 @@ export interface StructuredResumeHighlight {
 }
 
 export interface StructuredResumeItem {
+  projectName?: string
   role?: string
   company?: string
   location?: string
@@ -247,6 +363,7 @@ export type VerificationIssueCode =
   | "UNSOURCED_NUMBER"
   | "MISSING_EVIDENCE"
   | "MISSING_SECTION"
+  | "SECTION_BOUNDARY"
   | "PARSE_INCOMPLETE"
 
 export interface VerificationIssue {

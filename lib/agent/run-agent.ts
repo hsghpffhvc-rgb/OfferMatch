@@ -6,14 +6,22 @@ import { extractJsonFromText } from "@/lib/agent/parse-json"
 import { sanitizeRewriteResult } from "@/lib/agent/keyword-filter"
 import {
   auditAndFinalizeRewrite,
+  getBlockingStructuralIssues,
   hasProjectSection,
   originalHasProjectBlock,
 } from "@/lib/agent/rewrite-quality"
 import {
+  buildSourceSectionIndex,
+  renderSourceSectionIndex,
+  type SourceSectionIndex,
+} from "@/lib/agent/source-sections"
+import {
   getMissingSourceSections,
   mergeRepairedSections,
+  restoreSourceEducation,
 } from "@/lib/agent/section-coverage"
 import { parseInterviewResult } from "@/lib/agent/interview-result"
+import { recoverResumeBasics, retainMissingResumeContent } from "@/lib/agent/resume-continuity"
 import {
   PHASE_A_SYSTEM,
   PHASE_B_SYSTEM,
@@ -50,15 +58,24 @@ import { assertAiConfigured, isAiConfigError } from "@/lib/agent/ai-config"
 import type {
   AgentAnalysisResult,
   AgentPhase,
+  DimensionInsight,
   EvidenceAnswer,
   EvidenceGapResult,
   EvidencePhase,
   EvidenceRefineResult,
   InterviewResult,
+  JdBreakdown,
+  OutlineItem,
+  OutlineJdMapping,
   OutlineResult,
+  OutlineStructuredSection,
   PersonaResult,
+  ResumeOutlineSection,
+  ResumeSnapshot,
+  ResumeSnapshotSection,
   ResultSource,
   RewriteResult,
+  StructuredResume,
   StreamEventEmitter,
 } from "@/lib/agent/types"
 
@@ -272,6 +289,89 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string")
 }
 
+function cleanString(value: unknown, max = 200): string {
+  if (typeof value !== "string") return ""
+  return value.replace(/\s+/g, " ").trim().slice(0, max)
+}
+
+function cleanStringList(value: unknown, limit = 8, itemMax = 80): string[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((item) => cleanString(item, itemMax))
+    .filter(Boolean)
+    .slice(0, limit)
+}
+
+/** 阶段 A 的简历全景梳理：改写阶段的结构权威来源，缺失时返回 undefined 而非空壳 */
+function parseResumeSnapshot(value: unknown): ResumeSnapshot | undefined {
+  if (!isRecord(value)) return undefined
+  const rawSections = Array.isArray(value.sections) ? value.sections : []
+  const sections: ResumeSnapshotSection[] = rawSections
+    .filter(isRecord)
+    .map((section) => ({
+      title: cleanString(section.title, 40),
+      items: (Array.isArray(section.items) ? section.items : [])
+        .filter(isRecord)
+        .map((item) => ({
+          label: cleanString(item.label, 80),
+          meta: cleanString(item.meta, 60) || undefined,
+          date: cleanString(item.date, 40) || undefined,
+          points: cleanStringList(item.points, 8, 160),
+        }))
+        .filter((item) => Boolean(item.label || item.meta || item.points.length)),
+    }))
+    .filter((section) => Boolean(section.title))
+
+  const coverageValue = isRecord(value.coverage) ? value.coverage : {}
+  const basicsValue = isRecord(value.basics) ? value.basics : {}
+
+  if (sections.length === 0) return undefined
+
+  return {
+    basics: {
+      name: cleanString(basicsValue.name, 60),
+      title: cleanString(basicsValue.title, 80),
+      contact: cleanString(basicsValue.contact, 120),
+    },
+    summary: cleanString(value.summary, 400),
+    sections,
+    coverage: {
+      sourceChars:
+        typeof coverageValue.sourceChars === "number" ? coverageValue.sourceChars : 0,
+      coveredItems:
+        typeof coverageValue.coveredItems === "number" ? coverageValue.coveredItems : 0,
+      extras: cleanStringList(coverageValue.extras, 8, 200),
+    },
+  }
+}
+
+function parseJdBreakdown(value: unknown): JdBreakdown | undefined {
+  if (!isRecord(value)) return undefined
+  return {
+    responsibilities: cleanStringList(value.responsibilities, 8, 80),
+    mustHave: cleanStringList(value.mustHave, 8, 80),
+    niceToHave: cleanStringList(value.niceToHave, 8, 80),
+    implicitNeeds: cleanStringList(value.implicitNeeds, 8, 80),
+  }
+}
+
+function parseDimensionInsights(value: unknown): DimensionInsight[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const insights: DimensionInsight[] = value
+    .filter(isRecord)
+    .map((item) => ({
+      key: cleanString(item.key, 30),
+      name: cleanString(item.name, 20),
+      score: typeof item.score === "number" ? item.score : 0,
+      verdict: cleanString(item.verdict, 120),
+      findings: cleanStringList(item.findings, 4, 120),
+      suggestions: cleanStringList(item.suggestions, 4, 120),
+    }))
+    .filter((item) => Boolean(item.key))
+    .slice(0, 8)
+  return insights.length > 0 ? insights : undefined
+}
+
 function parsePersona(text: string): PersonaResult {
   const value = extractJsonFromText<unknown>(text)
   if (!isRecord(value)) throw new Error("阶段 A 返回结构不完整")
@@ -290,25 +390,85 @@ function parsePersona(text: string): PersonaResult {
     optimizationAdvice: isStringArray(value.optimizationAdvice)
       ? value.optimizationAdvice
       : fallback.optimizationAdvice,
+    // 结构化梳理必须透传：阶段 B 的大纲与阶段 C 的重写都以它为事实边界
+    jdBreakdown: parseJdBreakdown(value.jdBreakdown),
+    resumeSnapshot: parseResumeSnapshot(value.resumeSnapshot),
+    dimensionInsights: parseDimensionInsights(value.dimensionInsights),
+    reasoningSummary: cleanString(value.reasoningSummary, 200) || undefined,
   }
+}
+
+function parseOutlineStructured(value: unknown): OutlineStructuredSection[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const sections: OutlineStructuredSection[] = value
+    .filter(isRecord)
+    .map((section) => ({
+      type: (cleanString(section.type, 20) || "experience") as OutlineStructuredSection["type"],
+      title: cleanString(section.title, 40),
+      items: (Array.isArray(section.items) ? section.items : [])
+        .filter(isRecord)
+        .map((item) => ({
+          label: cleanString(item.label, 80),
+          meta: cleanString(item.meta, 60) || undefined,
+          date: cleanString(item.date, 40) || undefined,
+          focus: cleanStringList(item.focus, 6, 60),
+          sourceRef: cleanString(item.sourceRef, 80) || undefined,
+          action:
+            item.action === "keep" || item.action === "merge" || item.action === "drop"
+              ? (item.action as OutlineItem["action"])
+              : undefined,
+          reason: cleanString(item.reason, 120) || undefined,
+        }))
+        .filter((item) => Boolean(item.label || item.meta)),
+    }))
+    .filter((section) => section.items.length > 0)
+  return sections.length > 0 ? sections : undefined
 }
 
 function parseOutline(text: string): OutlineResult {
   const value = extractJsonFromText<unknown>(text)
   if (!isRecord(value)) throw new Error("阶段 B 返回结构不完整")
   const fallback = getFallbackOutline()
-  const sections = Array.isArray(value.sections)
-    ? value.sections.filter(isRecord).map((section) => ({
-        heading: typeof section.heading === "string" ? section.heading : "简历内容",
-        bullets: isStringArray(section.bullets) ? section.bullets : [],
+
+  const structured = parseOutlineStructured(value.structured)
+    ?? parseOutlineStructured(value.sections)
+
+  // 兼容字段：结构化大纲存在时由它派生，保证旧组件仍能读到 heading + bullets
+  const compatSections: ResumeOutlineSection[] = structured
+    ? structured.map((section) => ({
+        heading: section.title || "简历内容",
+        bullets: section.items.map((item) =>
+          [item.label, item.meta, item.date ? `（${item.date}）` : ""]
+            .filter(Boolean)
+            .join(" · "),
+        ),
       }))
-    : fallback.sections
+    : Array.isArray(value.sections)
+      ? value.sections.filter(isRecord).map((section) => ({
+          heading: typeof section.heading === "string" ? section.heading : "简历内容",
+          bullets: isStringArray(section.bullets) ? section.bullets : [],
+        }))
+      : []
+
+  const jdMapping: OutlineJdMapping[] = Array.isArray(value.jdMapping)
+    ? value.jdMapping.filter(isRecord).map((item) => ({
+        requirement: cleanString(item.requirement, 120),
+        howToCover: cleanString(item.howToCover, 160),
+        target: cleanString(item.target, 80),
+      })).filter((item) => Boolean(item.requirement))
+    : []
+
+  const sections = compatSections.length ? compatSections : fallback.sections
   return {
     summary: typeof value.summary === "string" ? value.summary : fallback.summary,
-    sections: sections.length ? sections : fallback.sections,
+    sections,
     keyHighlights: isStringArray(value.keyHighlights)
       ? value.keyHighlights
       : fallback.keyHighlights,
+    positioning: cleanString(value.positioning, 160) || undefined,
+    structured,
+    jdMapping: jdMapping.length ? jdMapping : undefined,
+    gaps: cleanStringList(value.gaps, 8, 120),
   }
 }
 
@@ -327,6 +487,7 @@ function parseRewrite(
   resumeText: string,
   outline: OutlineResult,
   evidence = "",
+  sourceIndex: SourceSectionIndex | null = null,
 ): RewriteResult {
   const value = extractJsonFromText<unknown>(text)
   if (!isRecord(value)) throw new Error("阶段 C 返回结构不完整")
@@ -456,10 +617,10 @@ function parseRewrite(
   normalized.scores.overallAfter = computedAfter
   normalized.scores.label = resolveMatchLabel(computedAfter)
 
-  // 正文统一由结构化数据渲染，并做确定性校验：重复/内部标签/截断/无来源数字等
+  // 正文统一由结构化数据渲染，并做确定性校验：重复/内部标签/截断/无来源数字/模块边界等
   const audited = auditAndFinalizeRewrite(
     sanitizeRewriteResult(normalized as unknown as RewriteResult),
-    { originalResume: resumeText, evidence },
+    { originalResume: resumeText, evidence, sourceIndex },
   )
   return audited.rewrite
 }
@@ -485,7 +646,7 @@ export async function runAgentPipeline(
     persona = markSource(await streamJsonPhaseWithRetry(
       "A",
       PHASE_A_SYSTEM,
-      buildPhaseAUserPrompt(jd),
+      buildPhaseAUserPrompt(jd, resume),
       emit,
       parsePersona,
       ANALYSIS_STREAM_OPTIONS,
@@ -503,6 +664,19 @@ export async function runAgentPipeline(
   }
   emit({ type: "result", phase: "A", data: persona, source: persona.source ?? "model" })
   emit({ type: "phase", phase: "A", status: "complete" })
+
+  const snapshotSections = persona.resumeSnapshot?.sections ?? []
+  console.info("phase_A_structure", JSON.stringify({
+    model: getModel(),
+    snapshotSections: snapshotSections.length,
+    snapshotItems: snapshotSections.reduce((total, section) => total + section.items.length, 0),
+    dimensionInsights: persona.dimensionInsights?.length ?? 0,
+    hasJdBreakdown: Boolean(persona.jdBreakdown),
+    source: pipelineSource,
+  }))
+  if (snapshotSections.length === 0) {
+    console.warn("phase_A_snapshot_missing: 改写阶段将退化为原文标题解析结构")
+  }
 
   // 阶段 B
   let outline: OutlineResult
@@ -696,6 +870,19 @@ export async function runEvidenceRefinePipeline(
 }
 
 
+/** 大纲传给改写阶段时只保留结构化字段，避免兼容字段重复占用输出预算 */
+function serializeOutlineForPrompt(outline: OutlineResult): string {
+  if (!outline.structured?.length) return JSON.stringify(outline)
+  return JSON.stringify({
+    summary: outline.summary,
+    positioning: outline.positioning ?? "",
+    sections: outline.structured,
+    keyHighlights: outline.keyHighlights,
+    jdMapping: outline.jdMapping ?? [],
+    gaps: outline.gaps ?? [],
+  })
+}
+
 /** 阶段 D：基于 JD、大纲、原始简历与用户补充的证据重写简历并评分 */
 export async function runRewritePipeline(
   jd: string,
@@ -704,10 +891,17 @@ export async function runRewritePipeline(
   resume: string,
   evidence: string,
   emit: StreamEventEmitter,
+  previousResume?: StructuredResume,
 ): Promise<RewriteResult> {
   const resumeInput =
     resume.trim() ||
     "（用户尚未提供简历，请基于理想大纲生成一份示例对齐简历，并在修改理由中说明这是模板生成。）"
+
+  // 结构索引：阶段 A 的梳理结果是改写阶段的模块边界依据，缺失时退化为原文标题解析
+  const sourceIndex = buildSourceSectionIndex(persona.resumeSnapshot, resume)
+  const sourceIndexBlock = renderSourceSectionIndex(sourceIndex)
+  const outlineJson = serializeOutlineForPrompt(outline)
+  const auditContext = { originalResume: resume, evidence, sourceIndex }
 
   let rewrite: RewriteResult
   let source: ResultSource = "model"
@@ -716,9 +910,9 @@ export async function runRewritePipeline(
     rewrite = markSource(await streamJsonPhaseWithRetry(
       "D",
       PHASE_C_SYSTEM,
-      buildPhaseCUserPrompt(jd, JSON.stringify(outline), resumeInput, evidence),
+      buildPhaseCUserPrompt(jd, outlineJson, resumeInput, evidence, sourceIndexBlock),
       emit,
-      (text) => parseRewrite(text, resume, outline, evidence),
+      (text) => parseRewrite(text, resume, outline, evidence, sourceIndex),
       REWRITE_STREAM_OPTIONS,
       2,
     ), "model")
@@ -736,10 +930,20 @@ export async function runRewritePipeline(
     throw error
   }
 
-  // 模型漏掉了原文中存在的模块（项目/教育）：只做一次定向修复，
+  // Retry results must not erase fields or whole sections already obtained for this same resume.
+  // Snapshot names and contact fallbacks are accepted only when they are present in the source.
+  const retained = retainMissingResumeContent(rewrite.resume, previousResume)
+  const basics = recoverResumeBasics(retained.basics, resume, persona.resumeSnapshot, previousResume?.basics)
+  rewrite = markSource(auditAndFinalizeRewrite(restoreSourceEducation({
+    ...rewrite,
+    resume: { ...retained, basics },
+  }, resume), auditContext).rewrite, "model")
+
+  // 结构性缺口（模块漏项 / 实习被并入全职岗 / 项目复述工作经历）只做一次定向修复。
   // 修复结果必须经过改写，绝不把原文整段塞进正文。
   const missingSections = getMissingSourceSections(rewrite, resume)
-  if (missingSections.length > 0) {
+  const boundaryIssues = getBlockingStructuralIssues(rewrite, resume, sourceIndex)
+  if (missingSections.length > 0 || boundaryIssues.length > 0) {
     try {
       const missingLabels = missingSections.map((item) => item.label).join("、")
       const sourceEvidence = missingSections
@@ -747,16 +951,29 @@ export async function runRewritePipeline(
         .join("\n\n")
 
       const repairPrompt = [
-        buildPhaseCUserPrompt(jd, JSON.stringify(outline), resumeInput, evidence),
+        buildPhaseCUserPrompt(jd, outlineJson, resumeInput, evidence, sourceIndexBlock),
         "",
-        `【本次修正要求】上一轮输出遗漏了原始简历中的${missingLabels}。请重新输出完整 JSON，并且必须包含对应章节：`,
-        '- 工作经历：resume.sections 中 type="experience"，每项含 role（岗位）、company（单位）、date、summary、highlights；',
-        '- 项目：resume.sections 中 type="projects"，每项含 name（项目名称）、role（个人角色）、date、summary、highlights；',
-        '- 教育：resume.sections 中 type="education"，含 school、date、degree / major。',
-        "要求：基于下列原文事实做重写（按 JD 相关性排序、STAR 化、保留真实数字与实施状态），",
+        "【本次修正要求】",
+        ...(missingSections.length > 0
+          ? [
+              `上一轮输出遗漏了原始简历中的${missingLabels}。必须包含对应章节：`,
+              '- 工作经历：resume.sections 中 type="experience"，每项含 role（岗位）、company（单位）、date、summary、highlights；',
+              '- 项目：resume.sections 中 type="projects"，每项含 name（项目名称）、role（个人角色）、date、summary、highlights；',
+              '- 教育：resume.sections 中 type="education"，含 school、date、degree / major。',
+            ]
+          : []),
+        ...(boundaryIssues.length > 0
+          ? [
+              "上一轮输出的模块边界有错误，必须逐条修正：",
+              ...boundaryIssues.map((issue, index) => `${index + 1}. ${issue}`),
+              "- 实习经历必须是工作经历中的独立条目，岗位名保留「实习」字样，不得与全职岗位合并；",
+              "- 项目经历只写独立交付物（项目名称、个人角色、方案与结果），不得复述工作经历的职责与成果；",
+              "- 同一条事实只能出现在一个模块，标题、要点都不得换句话重复。",
+            ]
+          : []),
+        "要求：基于原文事实做重写（按 JD 相关性排序、STAR 化、保留真实数字与实施状态），",
         "禁止编造，禁止把原文整段粘贴，禁止把项目角色写成正式岗位。",
-        "",
-        sourceEvidence,
+        ...(sourceEvidence ? ["", sourceEvidence] : []),
       ].join("\n")
 
       const repaired = await streamJsonPhaseWithRetry(
@@ -764,7 +981,7 @@ export async function runRewritePipeline(
         PHASE_C_SYSTEM,
         repairPrompt,
         emit,
-        (text) => parseRewrite(text, resume, outline, evidence),
+        (text) => parseRewrite(text, resume, outline, evidence, sourceIndex),
         REWRITE_STREAM_OPTIONS,
         1,
       )
@@ -774,11 +991,19 @@ export async function runRewritePipeline(
         .filter((item) => !stillMissing.some((rest) => rest.type === item.type))
         .map((item) => item.type)
 
+      // 边界问题都发生在工作经历 / 项目经历，命中时整块替换为修复版本
+      if (boundaryIssues.length > 0) {
+        const hasExperience = repaired.resume.sections.some((section) => section.type === "experience")
+        const hasProjects = repaired.resume.sections.some((section) => section.type === "projects")
+        if (hasExperience) fixedTypes.push("experience")
+        if (hasProjects) fixedTypes.push("projects")
+      }
+
       if (fixedTypes.length > 0) {
-        // 只合并被补齐的章节，其余内容沿用第一轮结果，再整体重跑质量检查
-        const merged = mergeRepairedSections(rewrite, repaired, fixedTypes)
+        // 只合并被修复的章节，其余内容沿用第一轮结果，再整体重跑质量检查
+        const merged = mergeRepairedSections(rewrite, repaired, [...new Set(fixedTypes)])
         rewrite = markSource(
-          auditAndFinalizeRewrite(merged, { originalResume: resume, evidence }).rewrite,
+          auditAndFinalizeRewrite(merged, auditContext).rewrite,
           "model",
         )
       }

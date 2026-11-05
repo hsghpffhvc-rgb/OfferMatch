@@ -1,12 +1,11 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { useRouter } from "next/navigation"
 import {
   AlertCircle,
   ArrowRight,
   CheckCircle2,
-  ExternalLink,
+  Eye,
   HelpCircle,
   Lightbulb,
   Loader2,
@@ -16,6 +15,15 @@ import {
   Target,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
+import { EvidenceDetail } from "@/components/evidence-detail"
 import { useEvidenceGap } from "@/lib/hooks/use-evidence-gap"
 import { DIMENSIONS, type OutlineResult, type PersonaResult } from "@/lib/agent/types"
 import { buildEvidenceTextFromState } from "@/lib/agent/evidence-gap"
@@ -63,9 +71,9 @@ export function EvidenceGapPanel({
   onApplied,
 }: EvidenceGapPanelProps) {
   const { state, startGaps, setAnswer, commitAnswer, skipGap, markSubmitted, reset } = useEvidenceGap()
-  const router = useRouter()
   const [dismissed, setDismissed] = useState(false)
   const [openHints, setOpenHints] = useState<Record<string, boolean>>({})
+  const [detailOpen, setDetailOpen] = useState(false)
 
   const autoStartedRef = useRef<string | null>(null)
 
@@ -145,18 +153,34 @@ export function EvidenceGapPanel({
                   阶段C 证据补足已提交
                 </p>
                 <p className="mt-1 text-xs leading-relaxed text-emerald-900/80">
-                  已提交 {answeredCount} 条证据，{skippedCount} 条标记为「无相关经历/数据」（重写时将用 XXX 占位）。
+                  已提交 {answeredCount} 条证据，{skippedCount} 条标记为「无相关经历/数据」（缺口仅保留在分析中）。
                 </p>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5 rounded-full"
-                onClick={() => router.push("/evidence")}
-              >
-                <ExternalLink className="size-3.5" aria-hidden="true" />
-                查看详情
-              </Button>
+              <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
+                <DialogTrigger
+                  render={
+                    <Button variant="outline" size="sm" className="gap-1.5 rounded-full" />
+                  }
+                >
+                  <Eye className="size-3.5" aria-hidden="true" />
+                  查看详情
+                </DialogTrigger>
+                <DialogContent className="min-h-0 gap-0 overflow-hidden sm:max-w-2xl">
+                  <DialogHeader className="border-b border-border/60 p-4 pr-12">
+                    <DialogTitle className="text-base">阶段C · 证据补足详情</DialogTitle>
+                    <DialogDescription className="text-xs leading-relaxed">
+                      这里的记录会作为重写依据；标记为「无相关经历/数据」的缺口不会写进简历正文。
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="min-h-0 flex-1 overflow-y-auto bg-muted/20 p-4">
+                    <EvidenceDetail
+                      gaps={state.gaps}
+                      answers={state.answers}
+                      skippedGapIds={state.skippedGapIds}
+                    />
+                  </div>
+                </DialogContent>
+              </Dialog>
             </div>
           </div>
         )}
@@ -165,7 +189,7 @@ export function EvidenceGapPanel({
           <div className="mt-4 rounded-2xl border border-dashed border-primary/30 bg-primary/5 p-4">
             <p className="text-sm font-medium text-foreground">检测到证据缺口，先补事实再重写</p>
             <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-              为避免编造，AI 会先追问你是否有相关经历与数据。没有的直接选「无相关经历/数据」，重写时会用 XXX 占位。
+              为避免编造，AI 会先追问你是否有相关经历与数据。没有的直接选「无相关经历/数据」，缺口会保留在分析中。
             </p>
             <Button
               onClick={performStart}

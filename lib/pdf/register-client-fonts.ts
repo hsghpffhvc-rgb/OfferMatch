@@ -1,5 +1,6 @@
 import { Font } from "@react-pdf/renderer"
 import { RESUME_FONT_FAMILY } from "@/lib/pdf/font-family"
+import { resumeHyphenationCallback } from "@/lib/pdf/hyphenation"
 
 let registered = false
 let registerPromise: Promise<void> | null = null
@@ -16,11 +17,7 @@ const FONT_CANDIDATES = [
 ] as const
 
 function hyphenate(word: string): string[] {
-  return (
-    word.match(
-      /[\u4e00-\u9fff]|[A-Za-z0-9]+(?:[.+#/-][A-Za-z0-9]+)*|[^\s]/g
-    ) ?? [word]
-  )
+  return resumeHyphenationCallback(word)
 }
 
 async function resolveReachableFonts(): Promise<{

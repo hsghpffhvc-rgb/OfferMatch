@@ -19,7 +19,7 @@ import {
   clearWorkspace,
   clearEvidenceInWorkspace,
   consumeResumePromptSuppression,
-  detectIncompleteSession,
+  detectPendingSession,
   getIncompleteAgentState,
   getPersistedAgentState,
   getPersistedEvidenceState,
@@ -30,6 +30,8 @@ import {
 } from "@/lib/workspace-session"
 import { HeroHeadline } from "@/components/hero-headline"
 import { buildEvidenceTextFromState } from "@/lib/agent/evidence-gap"
+import { recoverResumeBasics } from "@/lib/agent/resume-continuity"
+import { renderResumeMarkdown } from "@/lib/agent/rewrite-quality"
 import type { AgentPhase, OutlineResult } from "@/lib/agent/types"
 import {
   getFallbackOutline,
@@ -67,10 +69,11 @@ export function AnalysisWorkspace() {
   const draftIssues = state.rewrite?.verification?.status === "draft"
     ? (state.rewrite.verification.issues ?? []).filter((issue) => issue.severity === "error")
     : []
+  const hasLegacyPlaceholder = /XXX|×××/.test(state.rewrite?.rewrittenResumeMarkdown ?? "")
   const needsRewriteRetry =
     evidenceSubmitted
     && Boolean(state.persona && state.outline)
-    && (!state.rewrite || draftIssues.length > 0)
+    && (!state.rewrite || draftIssues.length > 0 || hasLegacyPlaceholder)
     && !isStreaming
   const isAnalysisDone = state.status === "done" && !!state.persona && !!state.rewrite
   const scores = state.rewrite?.scores ?? null
@@ -89,64 +92,64 @@ export function AnalysisWorkspace() {
     if (saved) setLastJd(saved)
   }, [])
 
-  // 启动时检测可恢复会话（含已完成分析）
+  // Existing results may have been saved before missing basics were recovered.
+  // Only add fields that can still be verified against the saved source resume.
   useEffect(() => {
-    const incomplete = detectIncompleteSession()
-    // 从证据详情页返回或已完成会话：直接沿用当前工作区，不再弹确认框
-    const suppressed = consumeResumePromptSuppression()
-    if (!incomplete || suppressed || incomplete.kind === "done") {
-      if (incomplete) {
-        const restored = getPersistedAgentState()
-        if (restored) {
-          setState({ ...restored, status: "done" })
+    if (!state.rewrite || !state.persona || !lastResume.trim()) return
+    const current = state.rewrite.resume.basics
+    const recovered = recoverResumeBasics(current, lastResume, state.persona.resumeSnapshot)
+    if (JSON.stringify(current) === JSON.stringify(recovered)) return
+    setState((prev) => {
+      if (!prev.rewrite || prev.rewrite !== state.rewrite) return prev
+      const resume = { ...prev.rewrite.resume, basics: recovered }
+      return { ...prev, rewrite: { ...prev.rewrite, resume, rewrittenResumeMarkdown: renderResumeMarkdown(resume) } }
+    })
+  }, [state.rewrite, state.persona, lastResume, setState])
+
+  // 启动时恢复工作区：正常中间态直接静默恢复，只有真正中断才询问
+  useEffect(() => {
+    consumeResumePromptSuppression()
+
+    const doneAgent = getPersistedAgentState()
+    if (doneAgent) {
+      setState({ ...doneAgent, status: "done" })
+    } else {
+      const partial = getIncompleteAgentState()
+      if (partial) {
+        const interrupted = partial.status === "streaming" || partial.status === "error"
+        if (partial.rewrite && partial.persona) {
+          setState({ ...partial, status: "done", streamInterrupted: interrupted })
+        } else if (partial.persona && partial.outline) {
+          // A/B 已完成、阶段 C/D 未完成：这是新流程的正常中间态，不伪造重写结果也不弹窗
+          setState({
+            ...partial,
+            status: "done",
+            rewrite: partial.rewrite ?? null,
+            streamInterrupted: interrupted,
+            usedFallback: false,
+            error: null,
+          })
+        } else if (partial.persona || partial.outline || partial.rewrite) {
+          setState({
+            ...partial,
+            status: "done",
+            persona: partial.persona ?? getFallbackPersona(),
+            outline: partial.outline ?? getFallbackOutline(),
+            rewrite: partial.rewrite ?? null,
+            streamInterrupted: true,
+            usedFallback: true,
+            source: "fallback",
+            error: null,
+          })
         }
       }
-      setSessionReady(true)
-      setResumePrompt(null)
-      return
     }
 
-    // 若分析未完成，先把可恢复的中间态灌入 UI（避免卡在假 streaming）
-    const partial = getIncompleteAgentState()
-    if (partial && state.status === "idle") {
-      const hasComplete = Boolean(partial.rewrite && partial.persona)
-      if (hasComplete) {
-        setState({
-          ...partial,
-          status: "done",
-          streamInterrupted: partial.status === "streaming" || partial.status === "error",
-        })
-      } else if (partial.persona && partial.outline) {
-        // A/B 已完成、阶段 D 未完成：这是新流程的正常中间态，不能伪造重写结果
-        setState({
-          ...partial,
-          status: "done",
-          rewrite: partial.rewrite ?? null,
-          streamInterrupted: partial.status === "streaming" || partial.status === "error",
-          usedFallback: false,
-          error: null,
-        })
-      } else if (partial.persona || partial.outline || partial.rewrite) {
-        setState({
-          ...partial,
-          status: "done",
-          persona: partial.persona ?? getFallbackPersona(),
-          outline: partial.outline ?? getFallbackOutline(),
-          rewrite: partial.rewrite ?? null,
-          streamInterrupted: true,
-          usedFallback: true,
-          source: "fallback",
-          error: null,
-        })
-      }
-    }
-
-    setResumePrompt({
-      kind: incomplete.kind,
-      resumePhase: incomplete.resumePhase,
-    })
-    // 有恢复弹窗时先挡住操作，等用户选择
-    setSessionReady(incomplete.kind !== "analysis")
+    setSessionReady(true)
+    const pending = detectPendingSession()
+    setResumePrompt(
+      pending ? { kind: pending.kind, resumePhase: pending.resumePhase } : null,
+    )
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -203,8 +206,18 @@ export function AnalysisWorkspace() {
 
   const handleContinueSession = () => {
     const phase = resumePrompt?.resumePhase ?? null
+    const kind = resumePrompt?.kind
     setResumePrompt(null)
     setSessionReady(true)
+
+    // A/B 被打断时服务端没有可恢复的中间产物，用已保存的输入重跑一遍才算真正「继续」
+    if (kind === "analysis") {
+      const inputs = getPersistedInputs()
+      if (inputs.jd.trim()) {
+        handleAnalyze(inputs.jd.trim(), inputs.resume.trim())
+        return
+      }
+    }
     scrollToPhase(phase)
   }
 
@@ -299,10 +312,7 @@ export function AnalysisWorkspace() {
               interviewStatus={interviewStatus}
             >
               {({ composer, phaseProgress, resumeMarkdown, resumePdf }) => (
-                <div
-                  id="phase-C"
-                  className="flex flex-col gap-6 lg:grid lg:grid-cols-[1fr_400px] lg:items-start"
-                >
+                <div className="flex flex-col gap-6 lg:grid lg:grid-cols-[1fr_400px] lg:items-start">
                   <div className="order-1 flex min-w-0 flex-col gap-3 lg:col-start-1 lg:row-start-1">
                     {composer}
                     {phaseProgress}
@@ -335,7 +345,9 @@ export function AnalysisWorkspace() {
                         <p className="mt-1 text-xs leading-relaxed text-amber-900/80">
                           {draftIssues.length > 0
                             ? draftIssues.map((issue) => issue.message).join("；")
-                            : "证据已提交，但重写没有成功返回（可能是超时或网络中断）。"}
+                            : hasLegacyPlaceholder
+                              ? "当前简历正文仍有 XXX 占位，需要重新生成并核对。"
+                              : "证据已提交，但重写没有成功返回（可能是超时或网络中断）。"}
                           重试会沿用你已经补好的证据，无需重新填写。
                         </p>
                         <Button

@@ -79,6 +79,7 @@ export const minimalStyles = StyleSheet.create({
     fontSize: 9.2,
     lineHeight: 1.4,
     color: "#4B5563",
+    textAlign: "justify",
   },
 
   // ---- Experience / Projects ----
@@ -107,6 +108,27 @@ export const minimalStyles = StyleSheet.create({
     color: "#9CA3AF",
     flexShrink: 0,
   },
+  // 同一单位的第二个及以后的岗位：同一单位块内的岗位行
+  roleTitleRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "baseline",
+    marginTop: 3,
+    marginBottom: 1,
+  },
+  roleTitle: {
+    fontSize: 9.8,
+    fontWeight: "bold",
+    color: "#1F2937",
+    flex: 1,
+    paddingRight: 8,
+  },
+  roleDate: {
+    fontSize: 8.5,
+    color: "#9CA3AF",
+    flexShrink: 0,
+  },
+  // 粗体标签/结构性总结必须与描述同一行
   bulletItem: {
     flexDirection: "row",
     marginTop: 2,
@@ -121,11 +143,18 @@ export const minimalStyles = StyleSheet.create({
     lineHeight: 1.4,
     color: "#4B5563",
     flex: 1,
+    textAlign: "justify",
   },
   bulletTitle: {
     fontWeight: "bold",
     color: "#111827",
   },
+
+  contextTitle: { fontSize: 10.5, fontWeight: "bold", color: "#111827", flex: 1, paddingRight: 8 },
+  contextSecondary: { fontSize: 9.5, fontWeight: "normal", color: "#6B7280" },
+  // 独立段落必须按内容撑开高度，不复用行内 flex 文本样式。
+  paragraphText: { fontSize: 9.2, lineHeight: 1.4, color: "#4B5563", textAlign: "justify", flexShrink: 0 },
+  contextDescription: { textAlign: "justify", fontSize: 9.2, lineHeight: 1.4, color: "#4B5563", marginTop: 2, marginBottom: 2 },
 
   // ---- Education ----
   eduItem: {
@@ -154,19 +183,18 @@ export const minimalStyles = StyleSheet.create({
 
   // ---- Skills ----
   skillRow: {
-    flexDirection: "row",
     marginBottom: 3,
   },
   skillGroup: {
-    width: 54,
     fontSize: 9,
     fontWeight: "bold",
     color: "#111827",
   },
   skillItems: {
-    flex: 1,
     fontSize: 9,
+    lineHeight: 1.4,
     color: "#4B5563",
+    textAlign: "justify",
   },
 
   // ---- Awards ----

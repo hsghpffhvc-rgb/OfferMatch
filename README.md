@@ -139,12 +139,21 @@ Key 获取：https://bailian.console.aliyun.com/
 
 响应为 SSE 流（`text/event-stream`），事件类型：`phase` | `reasoning`（可选） | `result` | `done` | `error`。A/B/C 阶段默认不推送模型原始 JSON，前端仅展示阶段进度文案。
 
+结构化约束（防止改写后模块混乱）：
+
+- 阶段 A 同时输入 JD 与原始简历，输出 `resumeSnapshot`（原文模块 / 条目 / 实习身份）与 `jdBreakdown`、`dimensionInsights`，服务端解析后完整透传；
+- 阶段 B 输出 `structured` 大纲（带 `sourceRef`）与 `jdMapping`，不再退回旧的 heading/bullets 兼容结构；
+- 阶段 D 的提示词会收到 `lib/agent/source-sections.ts` 生成的【原始简历结构索引】，明确「实习独立成条、项目不得复述工作经历」；
+- 生成后再做确定性边界校验（`SECTION_BOUNDARY`），发现实习被并入全职岗或项目经历复述工作经历时，触发一次定向修复，仍不合格则标记为待完善草稿。
+
 `POST /api/evidence-gap` — 阶段 E / F：JD 缺失证据追问与回填（不影响 `/api/chat` 的既有事件格式）：
 
 - `action: "ask"`：基于关键词缺口与现有经历生成 3-6 条追问，每条都引用简历原文锚点
 - `action: "refine"`：把用户回答转成结构化 highlight 回填到简历对应条目
 
 新增 SSE 事件：`evidence_phase` | `evidence_gaps` | `evidence_refined`。服务端只返回受影响的维度分，总分由前端 `calculateOverall()` 按 20/20/20/10/10/10/10 权重重算，单轮维度提升封顶 +12。
+
+证据补足详情在主界面以页面内弹窗打开（`components/evidence-detail.tsx`），与 `/evidence` 深链页共用同一份渲染。站内跳转、查看详情与返回都不会打断阶段运行，也不会再弹「继续上次分析」确认框；只有 A/B 阶段真正中断、或面试练习未完成时才询问。
 
 ## 项目结构
 

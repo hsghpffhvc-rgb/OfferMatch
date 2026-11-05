@@ -3,6 +3,8 @@ import type {
   StructuredResumeHighlight,
   StructuredResumeItem,
 } from "@/lib/agent/types"
+import { normalizeExperienceItem } from "@/lib/agent/experience-structure"
+import { joinResumeProse } from "@/lib/agent/resume-text"
 import type {
   ResumeBasics,
   ResumeData,
@@ -35,6 +37,7 @@ const SECTION_TYPE_ALIASES: Record<string, SectionType> = {
   certification: "certifications",
   awards: "awards",
   award: "awards",
+  other: "other",
 }
 
 const VALID_SECTION_TYPES = new Set<SectionType>(Object.values(SECTION_TYPE_ALIASES))
@@ -63,24 +66,26 @@ function formatHighlight(highlight: StructuredResumeHighlight): ResumeHighlight 
   return {
     title: cleanText(highlight.title, 10) || deriveHighlightTitle(highlight.action),
     text: [highlight.action, highlight.metric, highlight.result]
-    .map((value) => cleanText(value, 240))
+    .map((value) => joinResumeProse(cleanText(value, 240)))
     .filter(Boolean)
     .join("，"),
   }
 }
 
 function mapStructuredItem(type: SectionType, item: StructuredResumeItem): ResumeSectionItem {
+  if (type === "experience") item = normalizeExperienceItem(item)
   const highlights = Array.isArray(item.highlights)
     ? item.highlights.map(formatHighlight).filter((highlight) => Boolean(highlight.text))
     : []
 
   if (type === "experience") {
     return {
-      title: cleanText(item.role, 80),
-      subtitle: cleanText(item.company, 100),
+      projectName: cleanText(item.projectName),
+      title: cleanText(item.role || item.title || item.name, 80),
+      subtitle: cleanText(item.company || item.subtitle, 100),
       location: cleanText(item.location, 80),
       date: formatDate(item.date),
-      description: cleanText(item.summary),
+      description: joinResumeProse(cleanText(item.summary)),
       highlights,
     }
   }
@@ -96,7 +101,14 @@ function mapStructuredItem(type: SectionType, item: StructuredResumeItem): Resum
   }
 
   if (type === "languages") {
-    return { title: cleanText(item.name || item.title, 80), subtitle: cleanText(item.level, 80) }
+    return { title: cleanText(item.name || item.title, 80), subtitle: cleanText(item.level, 80), description: joinResumeProse(cleanText(item.notes || item.summary)) }
+  }
+
+  if (type === "awards") {
+    // name/notes 已经由质量层按「项目 → 奖项清单」归并
+    const primary = cleanText(item.name || item.title, 120)
+    const detail = cleanText(item.notes || item.summary || item.level, 200)
+    return { title: primary, description: detail }
   }
 
   if (type === "projects") {
@@ -109,7 +121,7 @@ function mapStructuredItem(type: SectionType, item: StructuredResumeItem): Resum
       subtitle: secondary,
       location: cleanText(item.location, 80),
       date: formatDate(item.date),
-      description: cleanText(item.summary || item.notes),
+      description: joinResumeProse(cleanText(item.summary || item.notes)),
       highlights,
     }
   }
@@ -119,7 +131,7 @@ function mapStructuredItem(type: SectionType, item: StructuredResumeItem): Resum
     subtitle: cleanText(item.subtitle || item.company, 120),
     location: cleanText(item.location, 80),
     date: formatDate(item.date),
-    description: cleanText(item.summary || item.notes),
+    description: joinResumeProse(cleanText(item.summary || item.notes)),
     highlights,
   }
 }
@@ -133,6 +145,7 @@ const SECTION_TITLES: Record<SectionType, string> = {
   languages: "语言能力",
   certifications: "证书",
   awards: "荣誉奖项",
+  other: "其他",
 }
 
 function defaultBasics(partial?: Partial<ResumeBasics>): ResumeBasics {
@@ -177,7 +190,7 @@ export function mapRewriteResultToResumeData(
   })
 
   const sections: ResumeSection[] = []
-  const summary = cleanText(structured.summary?.text || structured.summary?.positioning)
+  const summary = joinResumeProse(cleanText(structured.summary?.text || structured.summary?.positioning))
   if (summary) {
     sections.push({
       id: "summary",
@@ -189,21 +202,30 @@ export function mapRewriteResultToResumeData(
   }
 
   for (const section of structured.sections) {
-    if (!VALID_SECTION_TYPES.has(section.type as SectionType) || section.type === "summary" || section.type === "skills") {
+    if (section.type === "summary" || section.type === "skills") {
       continue
     }
 
-    const type = section.type as SectionType
+    const type = VALID_SECTION_TYPES.has(section.type as SectionType) ? section.type as SectionType : "other"
     const items = [...(Array.isArray(section.items) ? section.items : [])]
       .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
       .map((item) => mapStructuredItem(type, item))
-      .filter((item) => Boolean(item.title || item.description || item.highlights?.length))
+      .filter((item) => Boolean(item.title || item.subtitle || item.projectName || item.description || item.highlights?.length))
 
-    if (!items.length || sections.some((existing) => existing.type === type)) continue
+    // 「工作经历」与「实习经历」同属 experience 类型，但必须各自成块
+    const title = cleanText(section.title, 40) || SECTION_TITLES[type]
+    const existing = sections.find(
+      (existing) => existing.type === type && existing.title === title,
+    )
+    if (!items.length) continue
+    if (existing) {
+      existing.items.push(...items)
+      continue
+    }
     sections.push({
-      id: type,
+      id: `${type}-${sections.length}`,
       type,
-      title: cleanText(section.title, 40) || SECTION_TITLES[type],
+      title,
       placement: type === "languages" || type === "certifications" ? "sidebar" : "main",
       items,
     })

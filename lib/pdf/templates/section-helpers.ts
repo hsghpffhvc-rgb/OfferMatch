@@ -2,6 +2,11 @@ import type { ResumeData, ResumeHighlight, ResumeSection, ResumeSectionItem, Sec
 
 const EMPTY_TEXT_RE = /^\s*$/
 
+/** Custom section titles must have a visible fallback instead of an unexplained dot. */
+export function getSectionIconLabel(title: string): string {
+  return Array.from(title.trim()).find((char) => /[\p{L}\p{N}]/u.test(char)) ?? "简"
+}
+
 function cleanText(value?: string): string {
   return value
     ?.replace(/\*{1,3}|_{1,3}|`/g, "")
@@ -16,6 +21,7 @@ function isNonEmptyText(value?: string): value is string {
 export function filterRenderableItems(items: ResumeSectionItem[]): ResumeSectionItem[] {
   return items.map((item) => ({
     ...item,
+    projectName: cleanText(item.projectName) || undefined,
     title: cleanText(item.title) || undefined,
     subtitle: cleanText(item.subtitle) || undefined,
     date: cleanText(item.date) || undefined,
@@ -43,9 +49,117 @@ export function getSection(resume: ResumeData, type: SectionType): ResumeSection
   return resume.sections.find((s) => s.type === type)
 }
 
+/**
+ * 按 type 取所有匹配的 section（保持原顺序）。
+ * 「工作经历」与「实习经历」都是 experience 类型，需要各自成块渲染。
+ */
+export function getSectionGroups(
+  resume: ResumeData,
+  type: SectionType
+): { title: string; items: ResumeSectionItem[] }[] {
+  return resume.sections
+    .filter((section) => section.type === type)
+    .map((section) => ({
+      title: cleanText(section.title) || DEFAULT_GROUP_TITLE[type],
+      items: filterRenderableItems(section.items ?? []),
+    }))
+    .filter((group) => group.items.length > 0)
+}
+
+const DEFAULT_GROUP_TITLE: Record<SectionType, string> = {
+  summary: "个人总结",
+  experience: "工作经历",
+  education: "教育背景",
+  skills: "专业技能",
+  projects: "项目经历",
+  languages: "语言能力",
+  certifications: "证书",
+  awards: "荣誉奖项",
+  other: "其他",
+}
+
 /** 按 type 取 items，没有则返回空数组 */
 export function getItems(resume: ResumeData, type: SectionType): ResumeSectionItem[] {
   return filterRenderableItems(getSection(resume, type)?.items ?? [])
+}
+
+export interface ExperienceRole {
+  projectName?: string
+  title?: string
+  date?: string
+  highlights: ResumeHighlight[]
+  description?: string
+}
+
+export interface ExperienceGroup {
+  /** 单位名（同一单位的多个岗位只展示一次） */
+  company?: string
+  location?: string
+  date?: string
+  roles: ExperienceRole[]
+}
+
+function uniqueDates(dates: string[]): string {
+  const values = dates.map((date) => cleanText(date)).filter((date) => date.length > 0)
+  const unique = [...new Set(values)]
+  if (unique.length <= 1) return unique[0] ?? ""
+  return unique.join("  /  ")
+}
+
+/**
+ * 同一单位的多个岗位合并成一个单位块：
+ * 单位只出现一次，岗位与各自要点在块内依次列出。
+ */
+export function groupExperienceItems(items: ResumeSectionItem[]): ExperienceGroup[] {
+  const groups: ExperienceGroup[] = []
+
+  for (const item of items) {
+    const company = cleanText(item.subtitle) || undefined
+    if (!company) {
+      groups.push({
+        company: undefined,
+        location: cleanText(item.location) || undefined,
+        date: cleanText(item.date) || undefined,
+        roles: [
+          {
+            projectName: cleanText(item.projectName) || undefined,
+            title: cleanText(item.title) || undefined,
+            date: cleanText(item.date) || undefined,
+            highlights: getHighlights(item),
+            description: cleanText(item.description) || undefined,
+          },
+        ],
+      })
+      continue
+    }
+
+    const existing = groups.find((group) => group.company === company)
+    const role: ExperienceRole = {
+      projectName: cleanText(item.projectName) || undefined,
+      title: cleanText(item.title) || undefined,
+      date: cleanText(item.date) || undefined,
+      highlights: getHighlights(item),
+      description: cleanText(item.description) || undefined,
+    }
+
+    if (existing) {
+      existing.roles.push(role)
+      existing.date = uniqueDates([
+        ...existing.roles.map((entry) => entry.date ?? ""),
+      ])
+      if (!existing.location && item.location) existing.location = cleanText(item.location)
+      continue
+    }
+
+    groups.push({
+      company,
+      location: cleanText(item.location) || undefined,
+      date: cleanText(item.date) || undefined,
+      roles: [role],
+    })
+  }
+
+  return groups
 }
 
 /** 取 summary 文本 */
@@ -54,10 +168,17 @@ export function getSummary(resume: ResumeData): string {
   return cleanText(item?.description) || cleanText(item?.title)
 }
 
-/** 取 awards 列表（string[]） */
+/** 取 awards 列表（string[]）：项目/活动名为标题，具体奖项清单跟在冒号后 */
 export function getAwards(resume: ResumeData): string[] {
-  return getItems(resume, "awards")
-    .map((i) => cleanText(i.title) || cleanText(i.description))
+  return resume.sections
+    .filter((section) => section.type === "awards")
+    .flatMap((section) => filterRenderableItems(section.items ?? []))
+    .map((item) => {
+      const title = cleanText(item.title)
+      const detail = cleanText(item.description)
+      if (title && detail && title !== detail) return `${title}：${detail}`
+      return title || detail
+    })
     .filter(isNonEmptyText)
 }
 

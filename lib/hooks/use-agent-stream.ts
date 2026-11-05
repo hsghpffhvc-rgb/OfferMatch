@@ -13,6 +13,7 @@ import type {
 import {
   clearInterviewInWorkspace,
   getPersistedAgentState,
+  getPersistedInputs,
   patchWorkspace,
   saveAgentProgress,
 } from "@/lib/workspace-session"
@@ -383,6 +384,9 @@ export function useAgentStream() {
       analysisId?: string
     }) => {
       abortRef.current?.abort()
+      const previousResume = stateRef.current.analysisId === params.analysisId && getPersistedInputs().resume.trim() === params.resume.trim()
+        ? stateRef.current.rewrite?.resume
+        : undefined
       const controller = new AbortController()
       abortRef.current = controller
 
@@ -407,6 +411,7 @@ export function useAgentStream() {
             outline: params.outline,
             resume: params.resume,
             evidence: params.evidence,
+            previousResume,
           }),
           signal: controller.signal,
         })

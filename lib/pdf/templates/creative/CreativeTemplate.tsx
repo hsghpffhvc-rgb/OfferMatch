@@ -1,13 +1,14 @@
-import { Document, Page, View, Text, Image } from "@react-pdf/renderer"
+import { Document, Page, View, Text, Image, Svg, Path } from "@react-pdf/renderer"
 import type { ResumeData } from "@/lib/pdf/types"
 import { creativeStyles as s } from "./styles"
 import {
-  getItems,
+  getSectionGroups,
   getSummary,
   getAwards,
   getSkillGroups,
-  getLanguages,
   getHighlights,
+  groupExperienceItems,
+  getSectionIconLabel,
 } from "../section-helpers"
 
 /**
@@ -21,6 +22,7 @@ import {
 const ICON_MAP: Record<string, string> = {
   "关于我": "关",
   "工作经历": "历",
+  "实习经历": "实",
   "项目经历": "项",
   "荣誉奖项": "誉",
 }
@@ -28,12 +30,11 @@ const ICON_MAP: Record<string, string> = {
 export function CreativeTemplate({ resume }: { resume: ResumeData }) {
   const { basics } = resume
   const summary = getSummary(resume)
-  const experiences = getItems(resume, "experience")
-  const projects = getItems(resume, "projects")
-  const education = getItems(resume, "education")
+  const experienceGroups = getSectionGroups(resume, "experience")
+  const projectGroups = getSectionGroups(resume, "projects")
+  const education = getSectionGroups(resume, "education").flatMap((group) => group.items)
   const skillGroups = getSkillGroups(resume)
   const awards = getAwards(resume)
-  const languages = getLanguages(resume)
 
   const contactItems = [
     { label: "电话", value: basics.phone },
@@ -44,19 +45,18 @@ export function CreativeTemplate({ resume }: { resume: ResumeData }) {
     { label: "LinkedIn", value: basics.linkedin },
   ].filter((c) => c.value && c.value.trim())
 
-  const educationItems = education.filter(
-    (edu) =>
-      !(
-        edu.description &&
-        (edu.title?.trim() === edu.description.trim() ||
-          edu.degree?.trim() === edu.description.trim())
-      ),
-  )
+  const educationItems = education
 
   const MainTitle = ({ children }: { children: string }) => (
-    <View style={s.mainTitleRow}>
+    <View style={s.mainTitleRow} minPresenceAhead={56}>
       <View style={s.mainTitleIcon}>
-        <Text style={s.mainTitleIconText}>{ICON_MAP[children] ?? "•"}</Text>
+        {/校园|校内|学生|教育|学历/.test(children) ? (
+          <Svg width={13} height={13} viewBox="0 0 24 24">
+            <Path d="M2 9L12 3L22 9L12 15Z M6 12V18L12 21L18 18V12 M22 9V17" stroke="#FFFFFF" strokeWidth={1.6} fill="none" />
+          </Svg>
+        ) : (
+          <Text style={s.mainTitleIconText}>{ICON_MAP[children] ?? getSectionIconLabel(children)}</Text>
+        )}
       </View>
       <Text style={s.mainTitle}>{children}</Text>
     </View>
@@ -66,6 +66,10 @@ export function CreativeTemplate({ resume }: { resume: ResumeData }) {
     <Document>
       <Page size="A4" style={s.page} wrap>
       {/* ===== Left Sidebar ===== */}
+      {/* 深色色块 fixed：多页时保持左侧版式一致 */}
+      <View fixed style={s.sidebarBanner} />
+      {/* 个人信息只在第一页出现，避免第二页把姓名 / 教育 / 技能再写一遍 */}
+      {/* 侧栏内容固定：不参与分页，避免侧栏撑高导致第一页正文被挤到下一页 */}
       <View fixed style={s.sidebar}>
         {/* Photo + Name */}
         <View style={s.sidebarCenter}>
@@ -131,18 +135,7 @@ export function CreativeTemplate({ resume }: { resume: ResumeData }) {
           </View>
         ) : null}
 
-        {/* Languages */}
-        {languages.length > 0 ? (
-          <View style={s.sidebarSection}>
-            <Text style={s.sidebarTitle2}>语言</Text>
-            {languages.map((l, i) => (
-              <View key={i} style={s.langRow}>
-                <Text style={s.langName}>{l.name}</Text>
-                <Text style={s.langLevel}>{l.level}</Text>
-              </View>
-            ))}
-          </View>
-        ) : null}
+
       </View>
 
       {/* ===== Right Main Content ===== */}
@@ -155,68 +148,75 @@ export function CreativeTemplate({ resume }: { resume: ResumeData }) {
           </View>
         ) : null}
 
-        {/* Experience */}
-        {experiences.length > 0 ? (
-          <View style={s.mainSection}>
-            <MainTitle>工作经历</MainTitle>
-            {experiences.map((exp, i) => (
-              <View key={i} style={s.expItem} wrap={false}>
-                <View style={s.expTitleRow}>
-                  <Text style={s.expTitle}>{exp.title}</Text>
-                  {exp.date ? <Text style={s.expDate}>{exp.date}</Text> : null}
-                </View>
-                {exp.subtitle ? (
-                  <Text style={s.expSub}>
-                    {exp.subtitle}
-                    {exp.location ? `  ·  ${exp.location}` : ""}
+        {/* Experience / Internship：同一单位的多个岗位只展示一次 */}
+        {experienceGroups.map((section, sectionIndex) => (
+          <View key={sectionIndex} style={s.mainSection}>
+            <MainTitle>{section.title}</MainTitle>
+            {groupExperienceItems(section.items).map((group, i) => (
+              <View key={i} style={s.expItem}>
+                <View style={s.expTitleRow} minPresenceAhead={28}>
+                  <Text style={s.expTitle}>
+                    {group.company ?? group.roles[0]?.projectName ?? group.roles[0]?.title ?? ""}
+                  {group.company && group.roles.length === 1 && !group.roles[0]?.projectName && group.roles[0]?.title
+                    ? <Text style={s.contextSecondary}>{`  ·  ${group.roles[0].title}`}</Text> : null}
+                  {!group.company && group.roles[0]?.projectName && group.roles[0]?.title && group.roles[0].title !== group.roles[0].projectName ? <Text style={s.contextSecondary}>{`  ·  ${group.roles[0].title}`}</Text> : null}
                   </Text>
+                  {group.date ? <Text style={s.expDate}>{group.date}</Text> : null}
+                </View>
+                {group.company && group.location ? (
+                  <Text style={s.expSub}>{group.location}</Text>
                 ) : null}
-                {getHighlights(exp).map((point, j) => (
-                  <View key={j} style={s.bulletItem}>
-                    <Text style={s.bullet}>•</Text>
-                    <Text style={s.bulletText}>
-                      {point.title ? <Text style={s.bulletTitle}>{point.title} </Text> : null}
-                      {point.text}
+                {group.roles.map((role, j) => (
+                  <View key={j}>
+{group.company && (role.projectName || (group.roles.length > 1 && role.title)) ? (
+                    <View style={s.roleTitleRow} minPresenceAhead={20}>
+                      <Text style={s.contextTitle}>
+                        {role.projectName || role.title}
+                        {role.projectName && role.title && role.projectName !== role.title ? <Text style={s.contextSecondary}>{`  ·  ${role.title}`}</Text> : null}
+                      </Text>
+                      {role.date && role.date !== group.date ? <Text style={s.roleDate}>{role.date}</Text> : null}
+                    </View>
+                  ) : null}
+                  {role.description ? <Text style={s.contextDescription}>{role.description}</Text> : null}
+                  {role.highlights.map((point, k) => (
+                      <Text key={k} style={[s.paragraphText, { marginTop: 2 }]} orphans={2} widows={2}>
+                      {point.title ? <Text style={s.bulletTitle}>{point.title}：</Text> : null}
+                          {point.text}
                     </Text>
+                    ))}
                   </View>
                 ))}
-                {exp.description && getHighlights(exp).length === 0 ? (
-                  <Text style={s.bulletText}>{exp.description}</Text>
-                ) : null}
               </View>
             ))}
           </View>
-        ) : null}
+        ))}
 
         {/* Projects */}
-        {projects.length > 0 ? (
-          <View style={s.mainSection}>
-            <MainTitle>项目经历</MainTitle>
-            {projects.map((proj, i) => (
-              <View key={i} style={s.expItem} wrap={false}>
-                <View style={s.expTitleRow}>
+        {projectGroups.map((section, sectionIndex) => (
+          <View key={sectionIndex} style={s.mainSection}>
+            <MainTitle>{section.title}</MainTitle>
+            {section.items.map((proj, i) => (
+              <View key={i} style={s.expItem}>
+                <View style={s.expTitleRow} minPresenceAhead={28}>
                   <Text style={s.expTitle}>
                     {proj.title}
-                    {proj.subtitle ? `  ·  ${proj.subtitle}` : ""}
+                    {proj.subtitle ? <Text style={s.contextSecondary}>{`  ·  ${proj.subtitle}`}</Text> : null}
                   </Text>
                   {proj.date ? <Text style={s.expDate}>{proj.date}</Text> : null}
                 </View>
                 {getHighlights(proj).map((point, j) => (
-                  <View key={j} style={s.bulletItem}>
-                    <Text style={s.bullet}>•</Text>
-                    <Text style={s.bulletText}>
-                      {point.title ? <Text style={s.bulletTitle}>{point.title} </Text> : null}
+                  <Text key={j} style={[s.paragraphText, { marginTop: 2 }]} orphans={2} widows={2}>
+                      {point.title ? <Text style={s.bulletTitle}>{point.title}：</Text> : null}
                       {point.text}
                     </Text>
-                  </View>
                 ))}
-                {proj.description && getHighlights(proj).length === 0 ? (
-                  <Text style={s.bulletText}>{proj.description}</Text>
+                {proj.description ? (
+                  <Text style={s.paragraphText}>{proj.description}</Text>
                 ) : null}
               </View>
             ))}
           </View>
-        ) : null}
+        ))}
 
         {/* Awards */}
         {awards.length > 0 ? (
@@ -230,6 +230,19 @@ export function CreativeTemplate({ resume }: { resume: ResumeData }) {
             ))}
           </View>
         ) : null}
+
+        {["languages", "certifications", "other"].flatMap((type) => getSectionGroups(resume, type as "languages" | "certifications" | "other")).map((group, index) => (
+          <View key={`extra-${index}`} style={s.mainSection}>
+            <MainTitle>{group.title}</MainTitle>
+            {group.items.map((item, itemIndex) => (
+              <View key={itemIndex}>
+                <Text style={s.paragraphText}>{[item.title, item.subtitle, item.date, item.location].filter(Boolean).join(" · ")}</Text>
+                {item.description ? <Text style={s.paragraphText}>{item.description}</Text> : null}
+                {getHighlights(item).map((point, pointIndex) => <Text key={pointIndex} style={s.paragraphText}>{point.title ? `${point.title}：` : ""}{point.text}</Text>)}
+              </View>
+            ))}
+          </View>
+        ))}
       </View>
     </Page>
     </Document>
